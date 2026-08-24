@@ -24,6 +24,8 @@
     <string name="recording_description">%1$s, %2$s, %3$s</string>
     <string name="copy_text">Copy text</string>
     <string name="transcribe_again">Transcribe again with selected model</string>
+    <string name="transcribe_language">Transcribe in another language…</string>
+    <string name="choose_transcription_language">Choose transcript language</string>
     <string name="transcript">Transcript</string>
     <string name="copied">Text copied</string>
     <string name="menu">Menu</string>
@@ -71,13 +73,13 @@
     <string name="model_openai_gpt_4o_mini">OpenAI · GPT-4o Mini Transcribe</string>
     <string name="model_openai_whisper_1">OpenAI · Whisper-1</string>
     <string name="model_xai_stt">xAI Speech to Text</string>
-    <string name="model_local_whisper_small">Local Whisper Small INT8</string>
+    <string name="model_local_whisper_small">Local Smart · Whisper + Omnilingual</string>
     <string name="model_groq_large_v3_description">Higher-accuracy Groq option. Free-tier API access, 25 MB upload limit.</string>
     <string name="model_groq_large_v3_turbo_description">Faster Groq option with a small accuracy tradeoff.</string>
     <string name="model_gemini_description">Free-tier multimodal transcription with strong paragraph formatting.</string>
     <string name="model_openai_description">Paid OpenAI speech-to-text model. GPT Transcribe is recommended for recorded audio.</string>
     <string name="model_xai_description">Paid xAI transcription with language-aware text formatting.</string>
-    <string name="model_local_description">Private and offline after the model download, but less accurate than the recommended cloud model.</string>
+    <string name="model_local_description">Private and offline after about 741 MB. Czech and French use Omnilingual; other languages use Whisper Small.</string>
     <string name="language_auto">Auto-detect</string>
     <string name="language_czech">Czech</string>
     <string name="language_english">English</string>

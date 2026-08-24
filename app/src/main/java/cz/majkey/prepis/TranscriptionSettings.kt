@@ -90,7 +90,10 @@ data class TranscriptionProfile(
             TranscriptionModel.LOCAL_WHISPER_SMALL,
             TranscriptionLanguage.CZECH,
         )
-        val DEFAULT = LOCAL_CZECH
+        val DEFAULT = TranscriptionProfile(
+            TranscriptionModel.LOCAL_WHISPER_SMALL,
+            TranscriptionLanguage.AUTO,
+        )
         val ALL = TranscriptionModel.entries.flatMap { model ->
             TranscriptionLanguage.entries.filter(model::supports).map { language ->
                 TranscriptionProfile(model, language)

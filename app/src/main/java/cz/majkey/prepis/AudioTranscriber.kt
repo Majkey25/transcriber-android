@@ -7,23 +7,38 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineOmnilingualAsrCtcModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
-import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.min
 
-class AudioTranscriber(
+internal class AudioTranscriber(
     private val resolver: ContentResolver,
-    private val modelDirectory: File,
+    private val models: LocalModels,
     private val language: TranscriptionLanguage = TranscriptionLanguage.CZECH,
 ) {
     fun transcribe(uri: Uri): String {
-        val recognizer = createRecognizer()
+        if (useOmnilingual(language)) return transcribeOmnilingual(uri)
+
+        val whisper = transcribeWhisper(uri)
+        if (language != TranscriptionLanguage.AUTO) return whisper.text
+        val detected = selectDetectedLanguage(whisper.detectedLanguages)
+            ?.let { runCatching { TranscriptionLanguage.fromId(it) }.getOrNull() }
+        return if (detected != null && useOmnilingual(detected)) {
+            transcribeOmnilingual(uri)
+        } else {
+            whisper.text
+        }
+    }
+
+    private fun transcribeWhisper(uri: Uri): WhisperTranscript {
+        val recognizer = createWhisperRecognizer()
         val parts = mutableListOf<String>()
+        val detectedLanguages = mutableListOf<String>()
 
         try {
             decodeAudio(uri) { samples, sampleRate ->
@@ -31,7 +46,9 @@ class AudioTranscriber(
                 try {
                     stream.acceptWaveform(samples, sampleRate)
                     recognizer.decode(stream)
-                    recognizer.getResult(stream).text.trim().takeIf(String::isNotEmpty)?.let(parts::add)
+                    val result = recognizer.getResult(stream)
+                    result.text.trim().takeIf(String::isNotEmpty)?.let(parts::add)
+                    detectedLanguages += result.lang
                 } finally {
                     stream.release()
                 }
@@ -40,15 +57,39 @@ class AudioTranscriber(
             recognizer.release()
         }
 
-        return formatTranscript(parts).ifBlank {
-            throw IOException("The recording contains no recognizable speech")
-        }
+        return WhisperTranscript(requireTranscript(parts), detectedLanguages)
     }
 
-    private fun createRecognizer(): OfflineRecognizer {
+    private fun transcribeOmnilingual(uri: Uri): String {
+        val recognizer = createOmnilingualRecognizer()
+        val parts = mutableListOf<String>()
+        try {
+            decodeAudio(uri) { samples, sampleRate ->
+                val stream = recognizer.createStream()
+                try {
+                    stream.acceptWaveform(samples, sampleRate)
+                    recognizer.decode(stream)
+                    formatCtcPart(recognizer.getResult(stream).text)
+                        .takeIf(String::isNotEmpty)
+                        ?.let(parts::add)
+                } finally {
+                    stream.release()
+                }
+            }
+        } finally {
+            recognizer.release()
+        }
+        return requireTranscript(parts)
+    }
+
+    private fun requireTranscript(parts: List<String>): String = formatTranscript(parts).ifBlank {
+        throw IOException("The recording contains no recognizable speech")
+    }
+
+    private fun createWhisperRecognizer(): OfflineRecognizer {
         val whisper = OfflineWhisperModelConfig(
-            encoder = modelDirectory.resolve(ENCODER_FILE).path,
-            decoder = modelDirectory.resolve(DECODER_FILE).path,
+            encoder = models.whisper.resolve(ENCODER_FILE).path,
+            decoder = models.whisper.resolve(DECODER_FILE).path,
             language = localWhisperLanguage(language),
             task = "transcribe",
             tailPaddings = 500,
@@ -58,7 +99,19 @@ class AudioTranscriber(
             numThreads = min(MAX_THREADS, Runtime.getRuntime().availableProcessors()),
             provider = "cpu",
             modelType = "whisper",
-            tokens = modelDirectory.resolve(TOKENS_FILE).path,
+            tokens = models.whisper.resolve(TOKENS_FILE).path,
+        )
+        return OfflineRecognizer(config = OfflineRecognizerConfig(modelConfig = model))
+    }
+
+    private fun createOmnilingualRecognizer(): OfflineRecognizer {
+        val model = OfflineModelConfig(
+            omnilingual = OfflineOmnilingualAsrCtcModelConfig(
+                model = models.omnilingual.resolve(OMNILINGUAL_MODEL_FILE).path,
+            ),
+            numThreads = min(MAX_THREADS, Runtime.getRuntime().availableProcessors()),
+            provider = "cpu",
+            tokens = models.omnilingual.resolve(OMNILINGUAL_TOKENS_FILE).path,
         )
         return OfflineRecognizer(config = OfflineRecognizerConfig(modelConfig = model))
     }
@@ -178,16 +231,41 @@ class AudioTranscriber(
         const val ENCODER_FILE = "small-encoder.int8.onnx"
         const val DECODER_FILE = "small-decoder.int8.onnx"
         const val TOKENS_FILE = "small-tokens.txt"
+        const val OMNILINGUAL_MODEL_FILE = "model.int8.onnx"
+        const val OMNILINGUAL_TOKENS_FILE = "tokens.txt"
 
         private const val MAX_THREADS = 4
         private const val CHUNK_SECONDS = 25
         private const val CODEC_TIMEOUT_US = 10_000L
         private const val MAX_IDLE_CYCLES = 3_000
     }
+
+    private data class WhisperTranscript(
+        val text: String,
+        val detectedLanguages: List<String>,
+    )
 }
 
 internal fun localWhisperLanguage(language: TranscriptionLanguage): String =
     language.apiCode.orEmpty()
+
+internal fun useOmnilingual(language: TranscriptionLanguage): Boolean =
+    language == TranscriptionLanguage.CZECH || language == TranscriptionLanguage.FRENCH
+
+internal fun selectDetectedLanguage(languages: List<String>): String? = languages
+    .map { it.trim().lowercase() }
+    .filter(String::isNotEmpty)
+    .groupingBy { it }
+    .eachCount()
+    .maxByOrNull { it.value }
+    ?.key
+
+internal fun formatCtcPart(raw: String): String {
+    val text = raw.trim()
+    if (text.isEmpty()) return ""
+    val capitalized = text.replaceFirstChar { it.titlecase() }
+    return if (capitalized.last() in ".!?") capitalized else "$capitalized."
+}
 
 internal class PcmChunker(
     private val channelCount: Int,

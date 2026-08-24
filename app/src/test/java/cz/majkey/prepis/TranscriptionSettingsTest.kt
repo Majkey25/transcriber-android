@@ -2,14 +2,16 @@ package cz.majkey.prepis
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class TranscriptionSettingsTest {
     @Test
-    fun `fresh install defaults to local Whisper Small in Czech`() {
+    fun `fresh install defaults to local Whisper Small with auto detection`() {
         assertEquals(TranscriptionModel.LOCAL_WHISPER_SMALL, TranscriptionProfile.DEFAULT.model)
-        assertEquals(TranscriptionLanguage.CZECH, TranscriptionProfile.DEFAULT.language)
+        assertEquals(TranscriptionLanguage.AUTO, TranscriptionProfile.DEFAULT.language)
     }
 
     @Test
@@ -29,6 +31,28 @@ class TranscriptionSettingsTest {
         assertEquals("cs", TranscriptionLanguage.CZECH.apiCode)
         assertEquals("", localWhisperLanguage(TranscriptionLanguage.AUTO))
         assertEquals("cs", localWhisperLanguage(TranscriptionLanguage.CZECH))
+    }
+
+    @Test
+    fun `local routing uses Omnilingual only for measured winning languages`() {
+        assertTrue(useOmnilingual(TranscriptionLanguage.CZECH))
+        assertTrue(useOmnilingual(TranscriptionLanguage.FRENCH))
+        assertFalse(useOmnilingual(TranscriptionLanguage.AUTO))
+        assertFalse(useOmnilingual(TranscriptionLanguage.ENGLISH))
+        assertFalse(useOmnilingual(TranscriptionLanguage.GERMAN))
+    }
+
+    @Test
+    fun `detected language uses the most frequent nonblank code`() {
+        assertEquals("cs", selectDetectedLanguage(listOf("cs", "", "fr", "cs")))
+        assertNull(selectDetectedLanguage(listOf("", " ")))
+    }
+
+    @Test
+    fun `CTC chunks receive minimal readable sentence formatting`() {
+        assertEquals("Dobrý den.", formatCtcPart(" dobrý den "))
+        assertEquals("Bonjour!", formatCtcPart("bonjour!"))
+        assertEquals("", formatCtcPart(" "))
     }
 
     @Test

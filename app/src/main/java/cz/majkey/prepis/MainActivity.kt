@@ -118,7 +118,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = TranscriptionSettingsStore(app)
     private val workManager = WorkManager.getInstance(app)
     private val recordings = MutableStateFlow<List<Recording>>(emptyList())
-    private val workInfos = workManager.getWorkInfosByTagFlow(TranscriptionWorker.GLOBAL_TAG)
     private var refreshJob: Job? = null
 
     private val _folderUri = MutableStateFlow(folders.load())
@@ -139,13 +138,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _settingsMessage = MutableStateFlow<String?>(null)
     val settingsMessage: StateFlow<String?> = _settingsMessage.asStateFlow()
 
+    val localWorkInfos: StateFlow<List<WorkInfo>> = workManager
+        .getWorkInfosByTagFlow(TranscriptionWorker.GLOBAL_TAG)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val cloudWorkInfos: StateFlow<List<WorkInfo>> = workManager
         .getWorkInfosByTagFlow(CloudTranscriptionWorker.GLOBAL_TAG)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val rows: StateFlow<List<RecordingRow>> = combine(
         recordings,
-        workInfos,
+        localWorkInfos,
         cloudWorkInfos,
         _profile,
         _configuredProviders,
@@ -382,6 +385,7 @@ private fun TranscriberApp(model: MainViewModel) {
     val rows by model.rows.collectAsState()
     val configuredProviders by model.configuredProviders.collectAsState()
     val profile by model.profile.collectAsState()
+    val localWorkInfos by model.localWorkInfos.collectAsState()
     val cloudWorkInfos by model.cloudWorkInfos.collectAsState()
     val settingsMessage by model.settingsMessage.collectAsState()
     var selectedKey by rememberSaveable { mutableStateOf<String?>(null) }
@@ -410,6 +414,7 @@ private fun TranscriberApp(model: MainViewModel) {
             row = selected,
             selectedProfile = profile,
             configuredProviders = configuredProviders,
+            localWorkInfos = localWorkInfos,
             cloudWorkInfos = cloudWorkInfos,
             readTranscripts = model::readTranscripts,
             onBack = { selectedKey = null },
@@ -581,6 +586,7 @@ private fun TranscriptScreen(
     row: RecordingRow,
     selectedProfile: TranscriptionProfile,
     configuredProviders: Set<CloudProvider>,
+    localWorkInfos: List<WorkInfo>,
     cloudWorkInfos: List<WorkInfo>,
     readTranscripts: suspend (String) -> Map<TranscriptionProfile, String>,
     onBack: () -> Unit,
@@ -590,6 +596,7 @@ private fun TranscriptScreen(
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
     var sourceMenuOpen by remember { mutableStateOf(false) }
+    var languageDialogOpen by remember { mutableStateOf(false) }
     var cloudDialogOpen by remember { mutableStateOf(false) }
     var transcripts by remember(row.recording.key) {
         mutableStateOf<Map<TranscriptionProfile, String>>(emptyMap())
@@ -599,10 +606,17 @@ private fun TranscriptScreen(
     var loaded by remember(row.recording.key) { mutableStateOf(false) }
     val backDescription = stringResource(R.string.back)
     val menuDescription = stringResource(R.string.menu)
-    val relevantWork = cloudWorkInfos.filter { info ->
+    val workInfos = localWorkInfos + cloudWorkInfos
+    val workTag: (TranscriptionProfile) -> String = { profile ->
+        if (profile.model.isLocal) {
+            TranscriptionWorker.recordingTag(row.recording.key, profile)
+        } else {
+            CloudTranscriptionWorker.recordingTag(row.recording.key, profile)
+        }
+    }
+    val relevantWork = workInfos.filter { info ->
         TranscriptionProfile.ALL.any { profile ->
-            !profile.model.isLocal &&
-                CloudTranscriptionWorker.recordingTag(row.recording.key, profile) in info.tags
+            workTag(profile) in info.tags
         }
     }
     val activeWork = relevantWork.lastOrNull {
@@ -612,18 +626,23 @@ private fun TranscriptScreen(
     }
     val activeProfile = activeWork?.let { info ->
         TranscriptionProfile.ALL.firstOrNull { profile ->
-            !profile.model.isLocal &&
-                CloudTranscriptionWorker.recordingTag(row.recording.key, profile) in info.tags
+            workTag(profile) in info.tags
         }
     }
     val requestedError = requestedProfile?.let { profile ->
         relevantWork.lastOrNull {
-            CloudTranscriptionWorker.recordingTag(row.recording.key, profile) in it.tags &&
+            workTag(profile) in it.tags &&
                 it.state == WorkInfo.State.SUCCEEDED
-        }?.outputData?.getString(CloudTranscriptionWorker.KEY_ERROR)
+        }?.outputData?.getString(
+            if (profile.model.isLocal) {
+                TranscriptionWorker.KEY_ERROR
+            } else {
+                CloudTranscriptionWorker.KEY_ERROR
+            },
+        )
     }
 
-    LaunchedEffect(row.recording.key, cloudWorkInfos, requestedProfile) {
+    LaunchedEffect(row.recording.key, localWorkInfos, cloudWorkInfos, requestedProfile) {
         transcripts = readTranscripts(row.recording.key)
         val selectedExists = transcripts.keys.any { it.id == selectedProfileId }
         if (!selectedExists) {
@@ -639,6 +658,40 @@ private fun TranscriptScreen(
     }
     val visibleProfile = transcripts.keys.firstOrNull { it.id == selectedProfileId }
     val transcript = visibleProfile?.let(transcripts::get)
+    val languageOptions = TranscriptionLanguage.entries
+        .filter(selectedProfile.model::supports)
+        .filterNot { it == selectedProfile.language }
+    val selectedModelConfigured = selectedProfile.model.isLocal ||
+        selectedProfile.model.provider in configuredProviders
+
+    if (languageDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { languageDialogOpen = false },
+            title = { Text(stringResource(R.string.choose_transcription_language)) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    languageOptions.forEach { language ->
+                        TextButton(
+                            onClick = {
+                                val profile = selectedProfile.copy(language = language)
+                                requestedProfile = profile
+                                onTranscribe(profile)
+                                languageDialogOpen = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(stringResource(language.nameResource()))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { languageDialogOpen = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
 
     if (cloudDialogOpen) {
         AlertDialog(
@@ -714,6 +767,15 @@ private fun TranscriptScreen(
                             onClick = {
                                 menuOpen = false
                                 onRetranscribe()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.transcribe_language)) },
+                            enabled = selectedModelConfigured && activeProfile == null &&
+                                languageOptions.isNotEmpty(),
+                            onClick = {
+                                menuOpen = false
+                                languageDialogOpen = true
                             },
                         )
                         DropdownMenuItem(

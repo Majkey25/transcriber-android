@@ -51,7 +51,7 @@ class TranscriptionWorker(
 
         return try {
             updateState(PHASE_MODEL, applicationContext.getString(R.string.notification_model))
-            val modelDirectory = withContext(Dispatchers.IO) { models.ensureInstalled() }
+            val modelDirectories = withContext(Dispatchers.IO) { models.ensureInstalled() }
             modelReady = true
 
             updateState(
@@ -61,7 +61,7 @@ class TranscriptionWorker(
             val transcript = withContext(Dispatchers.IO) {
                 AudioTranscriber(
                     applicationContext.contentResolver,
-                    modelDirectory,
+                    modelDirectories,
                     profile.language,
                 ).transcribe(uri)
             }
@@ -203,24 +203,34 @@ class TranscriptionQueue(context: Context) {
 }
 
 internal class ModelStore(context: Context) {
-    private val directory = context.filesDir.resolve("models/whisper-small-int8")
-    private val readyFile = directory.resolve(".ready")
+    private val whisperDirectory = context.filesDir.resolve("models/whisper-small-int8")
+    private val omnilingualDirectory = context.filesDir.resolve("models/omnilingual-300m-int8")
 
     fun isReady(): Boolean = runCatching {
-        readyFile.readTextOrNull() == MODEL_REVISION &&
-            MODEL_FILES.all { directory.resolve(it.name).length() == it.size }
+        isReady(whisperDirectory, WHISPER_REVISION, WHISPER_FILES) &&
+            isReady(omnilingualDirectory, OMNILINGUAL_REVISION, OMNILINGUAL_FILES)
     }.getOrDefault(false)
 
-    fun ensureInstalled(): File {
-        if (isReady()) return directory
-        check(directory.mkdirs() || directory.isDirectory) { "The model directory cannot be created" }
-
-        MODEL_FILES.forEach(::install)
-        readyFile.writeText(MODEL_REVISION, Charsets.UTF_8)
-        return directory
+    fun ensureInstalled(): LocalModels {
+        ensureInstalled(whisperDirectory, WHISPER_REVISION, WHISPER_FILES)
+        // ponytail: install both engines up front; lazy-download Omnilingual if first-run size becomes a problem.
+        ensureInstalled(omnilingualDirectory, OMNILINGUAL_REVISION, OMNILINGUAL_FILES)
+        return LocalModels(whisperDirectory, omnilingualDirectory)
     }
 
-    private fun install(model: ModelFile) {
+    private fun isReady(directory: File, revision: String, files: List<ModelFile>): Boolean =
+        directory.resolve(".ready").readTextOrNull()?.trim() == revision &&
+            files.all { directory.resolve(it.name).length() == it.size }
+
+    private fun ensureInstalled(directory: File, revision: String, files: List<ModelFile>) {
+        if (isReady(directory, revision, files)) return
+        check(directory.mkdirs() || directory.isDirectory) { "The model directory cannot be created" }
+
+        files.forEach { install(directory, it) }
+        directory.resolve(".ready").writeText(revision, Charsets.UTF_8)
+    }
+
+    private fun install(directory: File, model: ModelFile) {
         val target = directory.resolve(model.name)
         if (target.length() == model.size && target.sha256() == model.sha256) return
         if (target.exists() && !target.delete()) throw IOException("Cannot replace ${model.name}")
@@ -245,11 +255,11 @@ internal class ModelStore(context: Context) {
 
     private fun download(model: ModelFile, partial: File) {
         val offset = partial.length()
-        val connection = URL("$MODEL_BASE_URL/${model.name}").openConnection() as HttpURLConnection
+        val connection = URL(model.url).openConnection() as HttpURLConnection
         connection.instanceFollowRedirects = true
         connection.connectTimeout = CONNECT_TIMEOUT_MS
         connection.readTimeout = READ_TIMEOUT_MS
-        connection.setRequestProperty("User-Agent", "Transcriber-Android/0.2.0")
+        connection.setRequestProperty("User-Agent", "Transcriber-Android/0.3.0")
         if (offset > 0) connection.setRequestProperty("Range", "bytes=$offset-")
 
         try {
@@ -287,36 +297,64 @@ internal class ModelStore(context: Context) {
         val name: String,
         val size: Long,
         val sha256: String,
+        val url: String,
     )
 
     private companion object {
-        const val MODEL_REVISION = "8f3c18b358db4d1f2fc1eae49d75cd20989e4309"
-        const val MODEL_BASE_URL =
-            "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small/resolve/$MODEL_REVISION"
+        const val WHISPER_REVISION = "8f3c18b358db4d1f2fc1eae49d75cd20989e4309"
+        const val WHISPER_BASE_URL =
+            "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small/resolve/$WHISPER_REVISION"
+        const val OMNILINGUAL_REVISION = "6abf1ece20cd2308bdb7d13cd78ec1c44fa4c094"
+        const val OMNILINGUAL_BASE_URL =
+            "https://huggingface.co/csukuangfj/" +
+                "sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12/" +
+                "resolve/$OMNILINGUAL_REVISION"
         const val CONNECT_TIMEOUT_MS = 30_000
         const val READ_TIMEOUT_MS = 60_000
         const val DOWNLOAD_BUFFER_SIZE = 1024 * 1024
         const val HASH_BUFFER_SIZE = 1024 * 1024
 
-        val MODEL_FILES = listOf(
+        val WHISPER_FILES = listOf(
             ModelFile(
                 AudioTranscriber.ENCODER_FILE,
                 112_442_483L,
                 "4cbe7b22fa9026b843b60a68640c747de05bafb1a11b57edc0e66c232d9f33a9",
+                "$WHISPER_BASE_URL/${AudioTranscriber.ENCODER_FILE}",
             ),
             ModelFile(
                 AudioTranscriber.DECODER_FILE,
                 262_226_114L,
                 "acad50b5c782696e91b55914cc5ab4f756f1532f76e22aa6fc615f39fb69a8ee",
+                "$WHISPER_BASE_URL/${AudioTranscriber.DECODER_FILE}",
             ),
             ModelFile(
                 AudioTranscriber.TOKENS_FILE,
                 816_730L,
                 "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126",
+                "$WHISPER_BASE_URL/${AudioTranscriber.TOKENS_FILE}",
+            ),
+        )
+        val OMNILINGUAL_FILES = listOf(
+            ModelFile(
+                AudioTranscriber.OMNILINGUAL_MODEL_FILE,
+                365_352_120L,
+                "e7c4e54ee4c4c47829cc6667d5d00ed8ea7bef1dcfeef0fce766f77752a2726c",
+                "$OMNILINGUAL_BASE_URL/${AudioTranscriber.OMNILINGUAL_MODEL_FILE}",
+            ),
+            ModelFile(
+                AudioTranscriber.OMNILINGUAL_TOKENS_FILE,
+                86_423L,
+                "a7a044c52cb29cbe8b0dc1953e92cefd4ca16b0ed968177b6beab21f9a7d0b31",
+                "$OMNILINGUAL_BASE_URL/${AudioTranscriber.OMNILINGUAL_TOKENS_FILE}",
             ),
         )
     }
 }
+
+internal data class LocalModels(
+    val whisper: File,
+    val omnilingual: File,
+)
 
 internal class ModelIntegrityException(message: String) : IOException(message)
 
