@@ -4,8 +4,8 @@
 
 Turn the Czech-only Android app into a general `Transcriber` while preserving the
 existing package ID, folder permission, API keys, and transcripts. New recordings
-use one model and language profile selected in Settings. The default is Local Whisper
-Small with Czech, so fresh installs work without a provider key. Cloud models show a
+use one model and language profile selected in Settings. The default is Local Smart
+with Auto-detect, so fresh installs work without a provider key. Cloud models show a
 clear setup-required state until their API key is configured.
 
 ## Tech stack
@@ -84,7 +84,7 @@ data class TranscriptionProfile(
 - App and repository are named `Transcriber` / `transcriber-android`.
 - Czech is the default language, not the UI language.
 - The selected model/language controls automatic and manual transcription.
-- Local Whisper Small with Czech is the fresh-install default.
+- Local Smart with Auto-detect is the fresh-install default.
 - Groq Large V3 remains available through its documented upload path.
 - Old transcripts and Android app data survive the upgrade.
 - Unit, lint, build, and emulator gates report no regression.

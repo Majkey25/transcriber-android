@@ -28,3 +28,30 @@ Cloud models require provider credentials, which were not available in the test
 environment. Transcriber supports OpenAI GPT Transcribe, Groq Whisper Large V3,
 Gemini, and xAI Speech to Text so each user can test the best option for their own
 recordings. Verify important transcripts against the recording.
+
+## Multilingual routing benchmark
+
+On 2026-08-24, six clean neural-voice fixtures compared the local Android model
+with two mobile candidates. Numbers are WER; lower is better.
+
+| Language | Whisper Small | Omnilingual 300M | Whisper Medium | Selected engine |
+| --- | ---: | ---: | ---: | --- |
+| Czech | 28.57% | 14.29% | 4.76% | Omnilingual 300M |
+| English | 4.17% | 12.50% | 4.17% | Whisper Small |
+| German | 3.85% | 7.69% | 3.85% | Whisper Small |
+| French | 16.00% | 8.00% | 16.00% | Omnilingual 300M |
+| Spanish | 3.85% | 3.85% | 7.69% | Whisper Small |
+| Polish | 4.76% | 14.29% | 4.76% | Whisper Small |
+
+On the 94-word archival Czech fixture, both Omnilingual 300M and Whisper Medium
+scored 20.21% WER. Whisper Small scored 24.47%. Whisper Medium needs 946 MB of
+model files and used more than 2 GB working memory on the host, so it was rejected
+for the 2 GB Android emulator.
+
+Android verification matched the routing decision. English stayed on Whisper.
+Czech used Omnilingual at 14.29% WER. French used Omnilingual at about 12% WER in
+the Android run. The app peaked at 145 MB PSS and 183 MB RSS during captured smart
+routing and did not crash.
+
+These clean fixtures compare engines; they do not predict accuracy on arbitrary
+calls. The smart local route still does not meet the 98% target.

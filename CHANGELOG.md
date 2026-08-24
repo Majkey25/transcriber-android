@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 - 2026-08-24
+
+### Added
+
+- Select a one-off transcript language from a recording's detail menu.
+
+### Changed
+
+- Defaulted fresh installs to Local Smart with automatic language detection.
+- Routed detected Czech and French to Omnilingual 300M; other languages keep Whisper Small.
+
 ## 0.2.1 - 2026-08-22
 
 ### Changed

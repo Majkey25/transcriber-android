@@ -12,8 +12,8 @@ selected independently in Settings.
 4. New recordings run sequentially and appear newest first.
 5. Open a recording to read, copy, or compare model/language versions.
 
-The default is Local Whisper Small with Czech as the language. The first local job
-downloads the verified 375,485,327-byte model; later jobs work offline without an
+The default is Local Smart with automatic language detection. The first local job
+downloads about 741 MB of verified model files; later jobs work offline without an
 API key. Cloud models remain optional in Settings. Groq documents a 25 MB direct-upload
 limit on its free tier. OpenAI recommends GPT Transcribe for recorded speech when a
 paid OpenAI key is available.
@@ -26,7 +26,7 @@ paid OpenAI key is available.
 | Google | Gemini 3.7 Flash, Gemini 3.6 Flash | Free-tier multimodal alternative with prompt-based formatting |
 | OpenAI | GPT Transcribe, GPT-4o Transcribe, GPT-4o Mini Transcribe, Whisper-1 | Paid API |
 | xAI | Speech to Text | Paid API; Czech text formatting is supported |
-| Local | Whisper Small multilingual INT8 | Private/offline after a 375,485,327-byte model download |
+| Local | Smart routing: Omnilingual 300M for Czech/French, Whisper Small for other languages | Private/offline after about 741 MB |
 
 Supported language settings are auto-detect, Czech, English, Slovak, German,
 Polish, Ukrainian, Russian, French, Spanish, Italian, Portuguese, Dutch, and
