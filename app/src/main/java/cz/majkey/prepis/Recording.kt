@@ -111,8 +111,8 @@ class RecordingScanner(context: Context) {
     }
 }
 
-class TranscriptStore(context: Context) {
-    private val directory = context.filesDir.resolve("transcripts")
+class TranscriptStore internal constructor(private val directory: File) {
+    constructor(context: Context) : this(context.filesDir.resolve("transcripts"))
 
     fun exists(key: String, profile: TranscriptionProfile): Boolean =
         profileFiles(key, profile).any(File::isFile)
@@ -126,10 +126,11 @@ class TranscriptStore(context: Context) {
         }
     }
 
-    fun hasAny(key: String): Boolean = directory.listFiles()?.any { file ->
-        file.isFile && file.name.endsWith(".txt") &&
-            (file.name == "$key.txt" || file.name.startsWith("$key-"))
-    } == true
+    fun keysWithTranscripts(): Set<String> = directory.listFiles().orEmpty().asSequence()
+        .filter { it.name.endsWith(".txt") && it.isFile }
+        // Recording keys are SHA-256 hex; a hyphen starts the profile suffix.
+        .map { it.name.removeSuffix(".txt").substringBefore('-') }
+        .toSet()
 
     fun delete(key: String, profile: TranscriptionProfile): Boolean =
         profileFiles(key, profile).all { !it.exists() || it.delete() }

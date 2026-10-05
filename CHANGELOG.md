@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 - 2026-10-05
+
+### Changed
+
+- Scan saved transcript filenames once per recording-list update instead of once for every row, while retaining profile checks and fresh results after writes or deletions.
+
 ## 0.3.0 - 2026-08-24
 
 ### Added
