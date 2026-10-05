@@ -157,8 +157,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _configuredProviders,
     ) { files, localWork, cloudWork, profile, configured ->
         withContext(Dispatchers.IO) {
+            val transcriptKeys = if (files.isEmpty()) emptySet() else transcripts.keysWithTranscripts()
             files.map { recording ->
-                recording.toRow(localWork, cloudWork, profile, configured)
+                recording.toRow(localWork, cloudWork, profile, configured, recording.key in transcriptKeys)
             }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -330,8 +331,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         cloudWork: List<WorkInfo>,
         profile: TranscriptionProfile,
         configured: Set<CloudProvider>,
+        hasTranscript: Boolean,
     ): RecordingRow {
-        val hasTranscript = transcripts.hasAny(key)
         if (transcripts.exists(key, profile)) {
             return RecordingRow(this, RecordingStatus.DONE, hasTranscript = true)
         }

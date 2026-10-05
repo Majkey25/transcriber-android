@@ -12,8 +12,8 @@ android {
         applicationId = "cz.majkey.prepis"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.3.1"
+        versionCode = 6
+        versionName = "0.3.2"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
