@@ -14,16 +14,15 @@ selected independently in Settings.
 
 The default is Local Smart with automatic language detection. The first local job
 downloads about 741 MB of verified model files; later jobs work offline without an
-API key. Cloud models remain optional in Settings. Groq documents a 25 MB direct-upload
-limit on its free tier. OpenAI recommends GPT Transcribe for recorded speech when a
-paid OpenAI key is available.
+API key. Cloud models remain optional in Settings. The app enforces provider-specific
+upload limits; API quotas and charges depend on your provider account.
 
 ## Models
 
 | Provider | Models | Notes |
 | --- | --- | --- |
-| Groq | Whisper Large V3, Large V3 Turbo | Large V3 is recommended; free-tier API quota is available |
-| Google | Gemini 3.7 Flash, Gemini 3.6 Flash | Free-tier multimodal alternative with prompt-based formatting |
+| Groq | Whisper Large V3, Large V3 Turbo | Quotas and charges depend on your API account |
+| Google | Gemini 3.7 Flash, Gemini 3.6 Flash | Multimodal transcription with prompt-based formatting |
 | OpenAI | GPT Transcribe, GPT-4o Transcribe, GPT-4o Mini Transcribe, Whisper-1 | Paid API |
 | xAI | Speech to Text | Paid API; Czech text formatting is supported |
 | Local | Smart routing: Omnilingual 300M for Czech/French, Whisper Small for other languages | Private/offline after about 741 MB |
@@ -41,7 +40,12 @@ Provider references:
 
 ## Privacy and storage
 
-- The local model sends nothing to a server.
+[Privacy policy, terms and data deletion](https://majkey25.github.io/transcriber-android/)
+are also available from the folder picker screen and Settings.
+Version 0.3.1 requires explicit automatic cloud-upload consent, blocks older queued
+jobs without consent, and keeps single-recording approval separate.
+
+- Local transcription does not upload recordings. Initial model downloads contact Hugging Face.
 - Cloud audio goes only to the model selected by the user.
 - API keys are encrypted at rest with Android Keystore and never enter source
   code, logs, WorkManager input, backups, or prompts.

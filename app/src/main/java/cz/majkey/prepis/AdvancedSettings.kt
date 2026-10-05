@@ -8,8 +8,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -50,6 +53,29 @@ internal fun SettingsScreen(
     val backDescription = stringResource(R.string.back)
     var modelMenu by remember { mutableStateOf(false) }
     var languageMenu by remember { mutableStateOf(false) }
+    var pendingProfile by remember { mutableStateOf<TranscriptionProfile?>(null) }
+
+    pendingProfile?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { pendingProfile = null },
+            title = { Text(stringResource(R.string.cloud_consent_title)) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(stringResource(R.string.cloud_consent_body,
+                        stringResource(checkNotNull(pending.model.provider).nameResource())))
+                    PrivacyLink()
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { onProfile(pending); pendingProfile = null }) {
+                    Text(stringResource(R.string.cloud_consent_accept))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingProfile = null }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -88,7 +114,8 @@ internal fun SettingsScreen(
                                     onClick = {
                                         val language = profile.language.takeIf(model::supports)
                                             ?: TranscriptionLanguage.AUTO
-                                        onProfile(TranscriptionProfile(model, language))
+                                        val next = TranscriptionProfile(model, language)
+                                        if (model.isLocal) onProfile(next) else pendingProfile = next
                                         modelMenu = false
                                     },
                                 )
@@ -132,6 +159,7 @@ internal fun SettingsScreen(
                         stringResource(R.string.advanced_privacy_notice),
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                    PrivacyLink()
                     message?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                 }
                 HorizontalDivider()

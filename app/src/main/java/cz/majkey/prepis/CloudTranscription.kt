@@ -66,6 +66,15 @@ internal fun parseCloudText(body: String): String = JSONObject(body)
 
 private const val MAX_UPLOAD_NAME_LENGTH = 120
 private const val M4A_EXTENSION = ".m4a"
+private const val CLOUD_CONSENT_VERSION = 1
+
+internal fun cloudUploadAllowed(
+    consentVersion: Int,
+    userConfirmed: Boolean,
+    automaticApproved: Boolean,
+    stopped: Boolean,
+): Boolean = !stopped && consentVersion == CLOUD_CONSENT_VERSION &&
+    (userConfirmed || automaticApproved)
 
 class CloudTranscriptionWorker(
     appContext: Context,
@@ -80,6 +89,9 @@ class CloudTranscriptionWorker(
         }.getOrNull() ?: return Result.failure()
         val provider = profile.model.provider
             ?: return Result.failure()
+        if (!uploadAllowed(provider)) {
+            return Result.success(workDataOf(KEY_ERROR to "Cloud upload consent is required in Settings"))
+        }
         val uri = inputData.getString(KEY_URI)?.let(Uri::parse) ?: return Result.failure()
         val key = inputData.getString(KEY_RECORDING) ?: return Result.failure()
         val name = inputData.getString(KEY_NAME) ?: return Result.failure()
@@ -91,6 +103,9 @@ class CloudTranscriptionWorker(
             setForeground(createForegroundInfo(provider, key))
             val recording = Recording(uri, name, size, lastModified = 0, key = key)
             val transcript = withContext(Dispatchers.IO) {
+                if (!uploadAllowed(provider)) {
+                    throw CancellationException("Cloud upload permission was withdrawn")
+                }
                 CloudClient(applicationContext.contentResolver).transcribe(profile, apiKey, recording)
             }
             withContext(Dispatchers.IO) {
@@ -109,6 +124,13 @@ class CloudTranscriptionWorker(
             }
         }
     }
+
+    private fun uploadAllowed(provider: CloudProvider): Boolean = cloudUploadAllowed(
+        consentVersion = inputData.getInt(KEY_CONSENT_VERSION, 0),
+        userConfirmed = inputData.getBoolean(KEY_USER_CONFIRMED, false),
+        automaticApproved = TranscriptionSettingsStore(applicationContext).hasCloudConsent(provider),
+        stopped = isStopped,
+    )
 
     private fun createForegroundInfo(provider: CloudProvider, key: String): ForegroundInfo {
         val manager = applicationContext.getSystemService(Service.NOTIFICATION_SERVICE) as NotificationManager
@@ -145,18 +167,22 @@ class CloudTranscriptionWorker(
         private const val KEY_SIZE = "size"
         private const val KEY_MODEL = "model"
         private const val KEY_LANGUAGE = "language"
+        private const val KEY_USER_CONFIRMED = "user_confirmed"
+        private const val KEY_CONSENT_VERSION = "consent_version"
         private const val NOTIFICATION_CHANNEL = "transcription"
         private const val MAX_TRANSIENT_RETRIES = 4
 
         fun recordingTag(key: String, profile: TranscriptionProfile) = "cloud-$key-${profile.id}"
 
-        fun input(recording: Recording, profile: TranscriptionProfile) = workDataOf(
+        fun input(recording: Recording, profile: TranscriptionProfile, userConfirmed: Boolean) = workDataOf(
             KEY_MODEL to profile.model.id,
             KEY_LANGUAGE to profile.language.id,
             KEY_URI to recording.uri.toString(),
             KEY_RECORDING to recording.key,
             KEY_NAME to recording.name,
             KEY_SIZE to recording.size,
+            KEY_USER_CONFIRMED to userConfirmed,
+            KEY_CONSENT_VERSION to CLOUD_CONSENT_VERSION,
         )
     }
 }
@@ -183,6 +209,7 @@ class CloudTranscriptionQueue(context: Context) {
         profile: TranscriptionProfile,
         replace: Boolean = false,
         automatic: Boolean = false,
+        userConfirmed: Boolean = false,
     ) = withContext(Dispatchers.IO) {
         require(profile.model.provider != null) { "Cloud queue requires a cloud model" }
         val uniqueName = CloudTranscriptionWorker.recordingTag(recording.key, profile)
@@ -199,7 +226,7 @@ class CloudTranscriptionQueue(context: Context) {
             throw IOException("The previous transcript cannot be removed")
         }
         val request = OneTimeWorkRequestBuilder<CloudTranscriptionWorker>()
-            .setInputData(CloudTranscriptionWorker.input(recording, profile))
+            .setInputData(CloudTranscriptionWorker.input(recording, profile, userConfirmed))
             .setConstraints(
                 Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED)

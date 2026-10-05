@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Transcriber</string>
+    <string name="privacy_and_terms">Privacy, terms and data deletion</string>
+    <string name="browser_unavailable">No browser is available. Contact majkeylab@gmail.com for the policy.</string>
     <string name="notification_channel">Recording transcription</string>
     <string name="notification_model">Downloading the local model…</string>
     <string name="notification_transcribing">Transcribing %1$s</string>
@@ -34,7 +36,10 @@
     <string name="transcript_read_failed">The transcript could not be loaded.</string>
     <string name="advanced_settings">Settings</string>
     <string name="cloud_transcription">Transcribe with another cloud model…</string>
-    <string name="cloud_upload_notice">Choose a configured cloud model. This uploads the recording and may use free-tier quota or incur charges.</string>
+    <string name="cloud_consent_title">Allow automatic cloud uploads?</string>
+    <string name="cloud_consent_body">%1$s will receive recordings, filenames, language and model settings from your selected folder to create transcripts. Existing recordings without a transcript and new recordings will upload automatically, including in the background. Provider charges, retention and data-use terms apply to your API account. Only upload audio you have permission to share. Choose Local Smart in Settings or remove an API key to stop queued cloud jobs and withdraw upload permission. Already sent audio must be managed with the provider.</string>
+    <string name="cloud_consent_accept">Allow automatic uploads</string>
+    <string name="cloud_upload_notice">Choose a configured provider to upload this recording, its filename and language/model settings for transcription. Provider retention and data-use terms apply. Only upload audio you have permission to share. This may use quota or incur provider charges.</string>
     <string name="cloud_in_progress">Transcribing with %1$s…</string>
     <string name="cancel">Cancel</string>
     <string name="source">Source</string>
@@ -74,10 +79,10 @@
     <string name="model_openai_whisper_1">OpenAI · Whisper-1</string>
     <string name="model_xai_stt">xAI Speech to Text</string>
     <string name="model_local_whisper_small">Local Smart · Whisper + Omnilingual</string>
-    <string name="model_groq_large_v3_description">Higher-accuracy Groq option. Free-tier API access, 25 MB upload limit.</string>
-    <string name="model_groq_large_v3_turbo_description">Faster Groq option with a small accuracy tradeoff.</string>
-    <string name="model_gemini_description">Free-tier multimodal transcription with strong paragraph formatting.</string>
-    <string name="model_openai_description">Paid OpenAI speech-to-text model. GPT Transcribe is recommended for recorded audio.</string>
+    <string name="model_groq_large_v3_description">Groq Whisper transcription. Quotas and charges depend on your API account. 25 MB upload limit.</string>
+    <string name="model_groq_large_v3_turbo_description">Groq Whisper Turbo transcription. Quotas and charges depend on your API account.</string>
+    <string name="model_gemini_description">Google Gemini audio transcription. Quotas and charges depend on your API account.</string>
+    <string name="model_openai_description">OpenAI speech-to-text transcription billed through your API account.</string>
     <string name="model_xai_description">Paid xAI transcription with language-aware text formatting.</string>
     <string name="model_local_description">Private and offline after about 741 MB. Czech and French use Omnilingual; other languages use Whisper Small.</string>
     <string name="language_auto">Auto-detect</string>
