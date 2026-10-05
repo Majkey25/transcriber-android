@@ -86,6 +86,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -116,6 +118,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val cloudQueue = CloudTranscriptionQueue(app)
     private val secrets = SecretStore(app)
     private val settings = TranscriptionSettingsStore(app)
+    private val cloudSettingsMutex = Mutex()
     private val workManager = WorkManager.getInstance(app)
     private val recordings = MutableStateFlow<List<Recording>>(emptyList())
     private var refreshJob: Job? = null
@@ -249,7 +252,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveApiKey(provider: CloudProvider, key: String) {
-        viewModelScope.launch(Dispatchers.IO) {
+        changeCloudSettings {
             _settingsMessage.value = try {
                 secrets.put(provider, key)
                 _configuredProviders.value = secrets.configuredProviders()
@@ -266,8 +269,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun removeApiKey(provider: CloudProvider) {
-        viewModelScope.launch(Dispatchers.IO) {
+        changeCloudSettings {
+            settings.revokeCloudConsent()
+            cloudQueue.cancelAll()
             secrets.remove(provider)
+            settings.save(TranscriptionProfile.DEFAULT)
+            _profile.value = settings.load()
             _configuredProviders.value = secrets.configuredProviders()
             refresh()
             _settingsMessage.value = app.getString(
@@ -279,8 +286,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveProfile(profile: TranscriptionProfile) {
         require(profile.model.supports(profile.language)) { "The model does not support this language" }
-        settings.save(profile)
-        _profile.value = profile
+        changeCloudSettings {
+            settings.revokeCloudConsent()
+            cloudQueue.cancelAll()
+            profile.model.provider?.let(settings::allowCloud)
+            settings.save(profile)
+            _profile.value = profile
+        }
+    }
+
+    fun confirmCloudTranscription(recording: Recording, profile: TranscriptionProfile) {
+        changeCloudSettings {
+            if (profile.model.isLocal) {
+                queue.enqueue(recording, profile)
+            } else {
+                cloudQueue.enqueue(recording, profile, userConfirmed = true)
+            }
+        }
+    }
+
+    private fun changeCloudSettings(action: suspend () -> Unit) = viewModelScope.launch {
+        cloudSettingsMutex.withLock { withContext(Dispatchers.IO) { action() } }
     }
 
     fun clearSettingsMessage() {
@@ -423,7 +449,7 @@ private fun TranscriberApp(model: MainViewModel) {
                 selectedKey = null
             },
             onTranscribe = { selectedProfile ->
-                model.enqueue(selected.recording, selectedProfile)
+                model.confirmCloudTranscription(selected.recording, selectedProfile)
             },
         )
 
@@ -468,6 +494,7 @@ private fun FolderScreen(message: String?, onPickFolder: () -> Unit) {
             Button(onClick = onPickFolder) {
                 Text(stringResource(R.string.choose_folder_action))
             }
+            PrivacyLink()
         }
     }
 }

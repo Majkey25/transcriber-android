@@ -1,0 +1,18 @@
+Transcriber third-party notices
+
+This APK includes APACHE-2.0.txt and WHISPER-MIT.txt alongside this file.
+
+sherpa-onnx 1.13.4, k2-fsa contributors, Apache License 2.0.
+https://github.com/k2-fsa/sherpa-onnx
+
+Whisper Small model, Copyright (c) 2022 OpenAI, MIT License.
+https://github.com/openai/whisper
+
+Omnilingual ASR 300M model, Meta AI / Omnilingual ASR Team, Apache License 2.0.
+https://huggingface.co/facebook/omniASR-CTC-300M
+
+AndroidX and Kotlin components retain their upstream Apache 2.0 notices.
+https://source.android.com/docs/setup/about/licenses
+https://github.com/JetBrains/kotlin
+
+Model files are downloaded separately, not embedded in this APK.

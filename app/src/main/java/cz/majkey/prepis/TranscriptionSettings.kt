@@ -121,12 +121,34 @@ class TranscriptionSettingsStore(context: Context) {
         val language = preferences.getString(KEY_LANGUAGE, null) ?: return TranscriptionProfile.DEFAULT
         return runCatching { TranscriptionProfile.fromIds(model, language) }
             .getOrDefault(TranscriptionProfile.DEFAULT)
+            .takeIf { it.model.isLocal ||
+                (preferences.getBoolean(KEY_AUTOMATIC_CLOUD_CONSENT, false) &&
+                    it.model.provider?.let(::hasCloudConsent) == true) }
+            ?: TranscriptionProfile.DEFAULT
+    }
+
+    fun hasCloudConsent(provider: CloudProvider): Boolean =
+        provider.id in preferences.getStringSet(KEY_CLOUD_CONSENT, emptySet()).orEmpty()
+
+    fun allowCloud(provider: CloudProvider) {
+        preferences.edit(commit = true) {
+            putStringSet(KEY_CLOUD_CONSENT,
+                preferences.getStringSet(KEY_CLOUD_CONSENT, emptySet()).orEmpty() + provider.id)
+        }
+    }
+
+    fun revokeCloudConsent() {
+        preferences.edit(commit = true) {
+            remove(KEY_CLOUD_CONSENT)
+            remove(KEY_AUTOMATIC_CLOUD_CONSENT)
+        }
     }
 
     fun save(profile: TranscriptionProfile) {
         preferences.edit {
             putString(KEY_MODEL, profile.model.id)
             putString(KEY_LANGUAGE, profile.language.id)
+            putBoolean(KEY_AUTOMATIC_CLOUD_CONSENT, !profile.model.isLocal)
         }
     }
 
@@ -134,5 +156,7 @@ class TranscriptionSettingsStore(context: Context) {
         const val PREFERENCES_NAME = "transcription_settings"
         const val KEY_MODEL = "model"
         const val KEY_LANGUAGE = "language"
+        const val KEY_CLOUD_CONSENT = "cloud_upload_consent_v1"
+        const val KEY_AUTOMATIC_CLOUD_CONSENT = "automatic_cloud_consent_v1"
     }
 }

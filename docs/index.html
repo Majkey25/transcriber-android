@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transcriber · Privacy and terms</title>
+  <style>
+    body { max-width: 48rem; margin: 2rem auto; padding: 0 1.25rem; font: 1.05rem/1.6 system-ui, sans-serif; color: #202020; background: #fff; }
+    a { color: #164c9b; } a:focus-visible { outline: 3px solid #164c9b; outline-offset: 4px; }
+    h1, h2 { line-height: 1.25; } nav { display: flex; flex-wrap: wrap; gap: 1rem; } li { margin-bottom: .6rem; }
+  </style>
+</head>
+<body>
+<header><h1>Transcriber</h1><p>Privacy policy and terms · Updated 5 October 2026</p>
+<nav aria-label="Legal sections"><a href="#privacy">Privacy</a><a href="#delete">Delete data</a><a href="#terms">Terms and costs</a><a href="#licenses">Licenses</a></nav></header>
+<main>
+<section id="privacy"><h2>Privacy policy</h2>
+<p>Transcriber, Android package <code>cz.majkey.prepis</code>, is published by Matěj Teplý, developer name Majkey. Contact: <a href="mailto:majkeylab@gmail.com">majkeylab@gmail.com</a>.</p>
+<p>The app has no developer account, advertising, analytics SDK or developer-operated transcription server. It reads M4A files only from a folder you select using the Android picker. It does not request microphone, contacts or location access.</p>
+<ul>
+<li><strong>Local Smart:</strong> audio is decoded and transcribed on the phone. Initial model downloads contact Hugging Face, which receives the IP address and normal download request information, not your recordings. Downloaded files are verified with SHA-256. After download, local transcription works offline.</li>
+<li><strong>Optional cloud models:</strong> after you confirm automatic uploads, existing recordings missing a transcript and new recordings in the selected folder are sent to the selected provider, including in background jobs. A separate cloud transcription action sends the selected recording. Audio, a sanitized filename, the selected language/model and your API credential are sent over HTTPS directly to OpenAI, Google Gemini, Groq or xAI. No developer backend receives them.</li>
+<li><strong>Local storage:</strong> transcripts, model files, folder access, selected settings and upload consent remain in app-private storage. API keys are encrypted using Android Keystore. App data is excluded from Android backup. Copied transcript text enters the Android clipboard and may be accessible to the app you paste into.</li>
+</ul>
+<p>Cloud processing, retention, international transfers, possible service improvement use and charges depend on the provider and your account terms. Read them before uploading sensitive recordings: <a href="https://openai.com/policies/privacy-policy/">OpenAI</a>, <a href="https://ai.google.dev/gemini-api/terms">Gemini API</a>, <a href="https://groq.com/privacy-policy/">Groq</a>, <a href="https://x.ai/legal/privacy-policy">xAI</a>. The app attempts to delete its temporary Gemini uploaded file after processing; this does not override provider logs, other retention rules or a failed deletion request. <a href="https://huggingface.co/privacy">Hugging Face privacy</a>.</p>
+<p>Only record or upload people whose audio you are entitled to process and share. The app is a general-purpose tool, not a service directed at children. It does not ask for age or create child profiles. A provider may impose its own age requirements.</p>
+</section>
+<section id="delete"><h2>Retention, withdrawal and deletion</h2>
+<p>Choose Local Smart in Settings or remove an API key to withdraw cloud upload permission and cancel queued cloud jobs. A transfer already in progress may finish; data already sent cannot be recalled. On upgrade, old cloud settings do not authorize uploads until you confirm again.</p>
+<p>To delete all app-held transcripts, encrypted keys, models and settings, use Android Settings → Apps → Transcriber → Storage → Clear storage, or uninstall. Your original recordings remain in the folder you selected; delete those separately with your file manager or recorder. Copies you pasted elsewhere must be deleted there. There is no Transcriber account to delete.</p>
+<p>For data already sent to a cloud provider, use that provider's account/privacy controls. The developer cannot remotely read or erase your phone or provider account. For support correspondence or a privacy request, email <a href="mailto:majkeylab@gmail.com?subject=Transcriber%20privacy%20request">majkeylab@gmail.com</a>. Include only what is needed; do not send recordings or API keys.</p>
+<p>A support email shares your address and message with the developer and email provider to handle your request. The basis is the legitimate interest in answering support requests, or a legal obligation when handling statutory requests. Correspondence is retained only while needed to resolve the request, a related dispute or a legal duty. You can request access, correction, deletion, restriction, portability or object to processing where applicable, and complain to a data protection authority, such as the <a href="https://uoou.gov.cz/">Czech Office for Personal Data Protection</a>.</p>
+</section>
+<section id="terms"><h2>Terms and costs</h2>
+<p>The developer provides this app without an app purchase, subscription or in-app billing. Cloud API providers can charge your own API account or apply quotas. Review their current prices before enabling uploads. Refund requests for provider charges belong with that provider; statutory consumer rights are unaffected.</p>
+<p>Transcripts can be inaccurate. Check important results against the recording. Use the app lawfully and respect other people's privacy and copyrights. Source code is provided under the repository's MIT license; this does not grant rights to third-party services or recordings. Nothing here excludes rights or liability that applicable law does not allow to be excluded.</p>
+</section>
+<section><h2>This website and cookies</h2>
+<p>This static page uses no cookies, analytics, forms, external fonts or advertising scripts. GitHub Pages hosts it and may process IP addresses and request logs for delivery and security under <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub's privacy statement</a>. No optional tracking is installed by this page.</p></section>
+<section id="licenses"><h2>Software and model credits</h2>
+<p>App source: <a href="https://github.com/Majkey25/transcriber-android/blob/main/LICENSE">MIT license</a>. The UI uses Android system fonts and repository vector artwork.</p>
+<ul>
+<li><a href="https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.4/LICENSE">sherpa-onnx</a> speech runtime, Apache 2.0.</li>
+<li><a href="https://github.com/openai/whisper/blob/main/LICENSE">OpenAI Whisper</a> and Whisper Small model, MIT.</li>
+<li><a href="https://huggingface.co/facebook/omniASR-CTC-300M">Meta Omnilingual ASR 300M</a>, model terms and attribution on the model card.</li>
+<li><a href="https://source.android.com/docs/setup/about/licenses">AndroidX / Android Open Source Project</a>, applicable component licenses including Apache 2.0.</li>
+</ul>
+</section>
+</main>
+<footer><p><a href="https://github.com/Majkey25/transcriber-android">Source and releases</a> · <a href="mailto:majkeylab@gmail.com">Contact the developer</a></p></footer>
+</body></html>
