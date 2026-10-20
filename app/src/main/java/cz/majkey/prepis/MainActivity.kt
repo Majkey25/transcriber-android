@@ -159,7 +159,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         withContext(Dispatchers.IO) {
             val transcriptKeys = if (files.isEmpty()) emptySet() else transcripts.keysWithTranscripts()
             files.map { recording ->
-                recording.toRow(localWork, cloudWork, profile, configured, recording.key in transcriptKeys)
+                recording.toRow(
+                    localWork, cloudWork, profile, configured, recording.key in transcriptKeys,
+                    transcripts.exists(recording.key, profile),
+                )
             }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -234,20 +237,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun enqueue(recording: Recording, replace: Boolean = false) {
-        enqueue(recording, _profile.value, replace)
+    fun enqueue(recording: Recording) {
+        enqueue(recording, _profile.value)
     }
 
     fun enqueue(
         recording: Recording,
         profile: TranscriptionProfile,
-        replace: Boolean = false,
     ) {
         viewModelScope.launch {
             if (profile.model.isLocal) {
-                queue.enqueue(recording, profile, replace)
+                queue.enqueue(recording, profile)
             } else if (profile.model.provider in _configuredProviders.value) {
-                cloudQueue.enqueue(recording, profile, replace)
+                cloudQueue.enqueue(recording, profile)
             }
         }
     }
@@ -326,66 +328,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun Recording.toRow(
-        localWork: List<WorkInfo>,
-        cloudWork: List<WorkInfo>,
-        profile: TranscriptionProfile,
-        configured: Set<CloudProvider>,
-        hasTranscript: Boolean,
-    ): RecordingRow {
-        if (transcripts.exists(key, profile)) {
-            return RecordingRow(this, RecordingStatus.DONE, hasTranscript = true)
-        }
-        val provider = profile.model.provider
-        if (provider != null && provider !in configured) {
-            return RecordingRow(this, RecordingStatus.SETUP, hasTranscript)
-        }
+}
 
-        val tagged = if (profile.model.isLocal) {
-            localWork.filter { TranscriptionWorker.recordingTag(key, profile) in it.tags }
-        } else {
-            cloudWork.filter { CloudTranscriptionWorker.recordingTag(key, profile) in it.tags }
-        }
-        val active = tagged.lastOrNull { it.state == WorkInfo.State.RUNNING } ?:
-            tagged.lastOrNull { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
-        if (active != null) {
-            return RecordingRow(
-                this,
-                when {
-                    !profile.model.isLocal && active.state == WorkInfo.State.RUNNING ->
-                        RecordingStatus.TRANSCRIBING
-                    profile.model.isLocal -> when (
-                        active.progress.getString(TranscriptionWorker.KEY_PHASE)
-                    ) {
-                        TranscriptionWorker.PHASE_MODEL -> RecordingStatus.MODEL
-                        TranscriptionWorker.PHASE_TRANSCRIBING -> RecordingStatus.TRANSCRIBING
-                        else -> RecordingStatus.WAITING
-                    }
-                    else -> RecordingStatus.WAITING
-                },
-                hasTranscript,
-            )
-        }
+internal const val ENQUEUED_TAG_PREFIX = "enqueued-"
 
-        val error = tagged.lastOrNull { it.state == WorkInfo.State.SUCCEEDED }
-            ?.outputData
-            ?.getString(
-                if (profile.model.isLocal) {
-                    TranscriptionWorker.KEY_ERROR
-                } else {
-                    CloudTranscriptionWorker.KEY_ERROR
-                },
-            )
+internal fun List<WorkInfo>.latestFinished(): WorkInfo? = asReversed().filter { it.state.isFinished }
+    .maxByOrNull { info ->
+        info.tags.firstOrNull { it.startsWith(ENQUEUED_TAG_PREFIX) }
+            ?.removePrefix(ENQUEUED_TAG_PREFIX)?.toLongOrNull() ?: 0L
+    }
+
+internal fun Recording.toRow(
+    localWork: List<WorkInfo>,
+    cloudWork: List<WorkInfo>,
+    profile: TranscriptionProfile,
+    configured: Set<CloudProvider>,
+    hasTranscript: Boolean,
+    hasProfileTranscript: Boolean,
+): RecordingRow {
+    val hasSavedTranscript = hasTranscript || hasProfileTranscript
+    val provider = profile.model.provider
+    val tagged = if (profile.model.isLocal) {
+        localWork.filter { TranscriptionWorker.recordingTag(key, profile) in it.tags }
+    } else {
+        cloudWork.filter { CloudTranscriptionWorker.recordingTag(key, profile) in it.tags }
+    }
+    val active = tagged.lastOrNull { it.state == WorkInfo.State.RUNNING } ?:
+        tagged.lastOrNull { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
+    if (active != null) {
         return RecordingRow(
             this,
             when {
-                error == null -> RecordingStatus.WAITING
-                hasTranscript -> RecordingStatus.ERROR_WITH_TRANSCRIPT
-                else -> RecordingStatus.ERROR
+                !profile.model.isLocal && active.state == WorkInfo.State.RUNNING ->
+                    RecordingStatus.TRANSCRIBING
+                profile.model.isLocal -> when (active.progress.getString(TranscriptionWorker.KEY_PHASE)) {
+                    TranscriptionWorker.PHASE_MODEL -> RecordingStatus.MODEL
+                    TranscriptionWorker.PHASE_TRANSCRIBING -> RecordingStatus.TRANSCRIBING
+                    else -> RecordingStatus.WAITING
+                }
+                else -> RecordingStatus.WAITING
             },
-            hasTranscript,
+            hasSavedTranscript,
         )
     }
+
+    val error = tagged.latestFinished()?.outputData?.getString(TranscriptionWorker.KEY_ERROR)
+    return RecordingRow(
+        this,
+        when {
+            error != null && hasSavedTranscript -> RecordingStatus.ERROR_WITH_TRANSCRIPT
+            error != null -> RecordingStatus.ERROR
+            hasProfileTranscript -> RecordingStatus.DONE
+            provider != null && provider !in configured -> RecordingStatus.SETUP
+            else -> RecordingStatus.WAITING
+        },
+        hasSavedTranscript,
+    )
 }
 
 data class RecordingRow(
@@ -446,7 +444,7 @@ private fun TranscriberApp(model: MainViewModel) {
             readTranscripts = model::readTranscripts,
             onBack = { selectedKey = null },
             onRetranscribe = {
-                model.enqueue(selected.recording, replace = true)
+                model.enqueue(selected.recording)
                 selectedKey = null
             },
             onTranscribe = { selectedProfile ->
@@ -657,11 +655,8 @@ private fun TranscriptScreen(
             workTag(profile) in info.tags
         }
     }
-    val requestedError = requestedProfile?.let { profile ->
-        relevantWork.lastOrNull {
-            workTag(profile) in it.tags &&
-                it.state == WorkInfo.State.SUCCEEDED
-        }?.outputData?.getString(
+    val requestedError = (requestedProfile ?: selectedProfile).let { profile ->
+        relevantWork.filter { workTag(profile) in it.tags }.latestFinished()?.outputData?.getString(
             if (profile.model.isLocal) {
                 TranscriptionWorker.KEY_ERROR
             } else {

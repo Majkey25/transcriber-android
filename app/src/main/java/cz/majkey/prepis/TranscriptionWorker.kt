@@ -161,7 +161,6 @@ class TranscriptionQueue(context: Context) {
     suspend fun enqueue(
         recording: Recording,
         profile: TranscriptionProfile,
-        replace: Boolean = false,
         automatic: Boolean = false,
     ) = withContext(Dispatchers.IO) {
         require(profile.model.isLocal) { "Local queue requires a local model" }
@@ -177,15 +176,12 @@ class TranscriptionQueue(context: Context) {
             return@withContext
         }
 
-        if (replace && !transcripts.delete(recording.key, profile)) {
-            throw IOException("The previous transcript cannot be removed")
-        }
-
         val request = OneTimeWorkRequestBuilder<TranscriptionWorker>()
             .setInputData(TranscriptionWorker.input(recording, profile))
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .addTag(TranscriptionWorker.GLOBAL_TAG)
             .addTag(tag)
+            .addTag("$ENQUEUED_TAG_PREFIX${System.currentTimeMillis()}")
             .build()
         manager.beginUniqueWork(QUEUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request).enqueue()
     }
