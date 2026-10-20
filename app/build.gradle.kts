@@ -39,6 +39,10 @@ android {
         compose = true
     }
 
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
@@ -65,6 +69,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation(kotlin("test"))
     testImplementation("org.json:json:20260719")
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("androidx.work:work-testing:2.11.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
