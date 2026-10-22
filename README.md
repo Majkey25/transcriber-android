@@ -87,6 +87,16 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 - Folders are limited to 10,000 direct entries, recording names to 512 characters,
   and document URIs to 2,048 characters. Oversized inventories are rejected before queueing.
 - Local PCM input is limited to 192 kHz and 32 channels before allocating audio chunks.
+- Local decoding checks cancellation between codec operations and recognition chunks.
+  A running native recognition or document-provider call must return before cancellation takes effect.
+- Only one queued or running job is admitted for each recording URI and model/language
+  profile. Changes to a busy recording are picked up by the next folder refresh or manual retry.
+- New transcripts are limited to 1 MiB of UTF-8 text each, with at most 10,000 files
+  and 256 MiB of retained transcript text. Local recognition stops with an explicit error
+  before accumulated text exceeds its limit; audio duration itself is not capped.
+  Jobs require room for a 1 MiB result before starting transcription, and writes recheck
+  the shared storage budget. These are operational limits, not a device-memory guarantee.
+  Existing transcripts are never removed to make room, including older over-limit data.
 - Cloud files above the provider-safe direct-upload limit are rejected instead of
   being split into multiple billable requests.
 - A cloud job has a 30-minute network deadline across upload, processing, and response.

@@ -30,6 +30,8 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 class TranscriptionWorker(
@@ -50,6 +52,7 @@ class TranscriptionWorker(
         var modelReady = models.isReady()
 
         return try {
+            withContext(Dispatchers.IO) { TranscriptStore(applicationContext).checkCapacity(key, profile) }
             updateState(PHASE_MODEL, applicationContext.getString(R.string.notification_model))
             val modelDirectories = withContext(Dispatchers.IO) { models.ensureInstalled() }
             modelReady = true
@@ -59,10 +62,12 @@ class TranscriptionWorker(
                 applicationContext.getString(R.string.notification_transcribing, name),
             )
             val transcript = withContext(Dispatchers.IO) {
+                val operation = currentCoroutineContext()
                 AudioTranscriber(
                     applicationContext.contentResolver,
                     modelDirectories,
                     profile.language,
+                    checkCancelled = operation::ensureActive,
                 ).transcribe(uri)
             }
             withContext(Dispatchers.IO) {
@@ -73,7 +78,8 @@ class TranscriptionWorker(
             throw exception
         } catch (exception: Exception) {
             if (!modelReady && exception is IOException &&
-                exception !is ModelIntegrityException && runAttemptCount < MAX_DOWNLOAD_RETRIES
+                exception !is ModelIntegrityException && exception !is TranscriptStorageException &&
+                runAttemptCount < MAX_DOWNLOAD_RETRIES
             ) {
                 Result.retry()
             } else {
@@ -162,18 +168,23 @@ class TranscriptionQueue(context: Context) {
         recording: Recording,
         profile: TranscriptionProfile,
         automatic: Boolean = false,
-    ) = withContext(Dispatchers.IO) {
+    ) = withTranscriptionAdmission {
         require(profile.model.isLocal) { "Local queue requires a local model" }
+        if (automatic && transcripts.exists(recording.key, profile)) return@withTranscriptionAdmission
         val tag = TranscriptionWorker.recordingTag(recording.key, profile)
+        val sourceTag = recording.admissionTag(profile)
+        if (manager.getWorkInfosByTag(sourceTag).get().any { it.state.isActive() }) {
+            return@withTranscriptionAdmission
+        }
         val existing = manager.getWorkInfosByTag(tag).get()
         val active = existing.any { it.state.isActive() }
-        if (active) return@withContext
+        if (active) return@withTranscriptionAdmission
         if (automatic && existing.any {
                 it.state == WorkInfo.State.SUCCEEDED &&
                     it.outputData.getString(TranscriptionWorker.KEY_ERROR) != null
             }
         ) {
-            return@withContext
+            return@withTranscriptionAdmission
         }
 
         val request = OneTimeWorkRequestBuilder<TranscriptionWorker>()
@@ -181,9 +192,11 @@ class TranscriptionQueue(context: Context) {
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .addTag(TranscriptionWorker.GLOBAL_TAG)
             .addTag(tag)
+            .addTag(sourceTag)
             .addTag("$ENQUEUED_TAG_PREFIX${System.currentTimeMillis()}")
             .build()
-        manager.beginUniqueWork(QUEUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request).enqueue()
+        manager.beginUniqueWork(QUEUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request).enqueue().result.get()
+        Unit
     }
 
     suspend fun cancelAll() = withContext(Dispatchers.IO) {

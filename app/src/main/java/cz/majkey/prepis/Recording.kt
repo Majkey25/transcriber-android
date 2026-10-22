@@ -10,6 +10,10 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 data class Recording(
     val uri: Uri,
@@ -31,6 +35,31 @@ fun recordingKey(uri: String, size: Long, lastModified: Long): String =
     MessageDigest.getInstance("SHA-256")
         .digest("$uri\n$size\n$lastModified".toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
+
+internal fun Recording.admissionTag(profile: TranscriptionProfile): String =
+    "source-${recordingKey(uri.toString(), 0, 0)}-${profile.id}"
+
+private val transcriptionAdmissionMutex = Mutex()
+
+internal suspend fun <T> withTranscriptionAdmission(block: () -> T): T =
+    transcriptionAdmissionMutex.withLock { withContext(Dispatchers.IO) { block() } }
+
+internal const val MAX_TRANSCRIPT_BYTES = 1024 * 1024
+internal const val MAX_TRANSCRIPT_FILES = 10_000
+internal const val MAX_TRANSCRIPT_STORE_BYTES = 256L * 1024 * 1024
+
+internal fun transcriptBytes(text: String): ByteArray {
+    if (text.length > MAX_TRANSCRIPT_BYTES) throw TranscriptSizeException()
+    return text.toByteArray(Charsets.UTF_8).also {
+        if (it.size > MAX_TRANSCRIPT_BYTES) throw TranscriptSizeException()
+    }
+}
+
+internal class TranscriptSizeException : IOException("The transcript exceeds the 1 MiB output limit")
+
+internal class TranscriptStorageException : IOException(
+    "Transcript storage is full (10,000 files or 256 MiB). Existing transcripts were kept.",
+)
 
 fun formatTranscript(parts: List<String>): String {
     val text = parts.joinToString(" ").replace(WHITESPACE, " ").trim()
@@ -146,10 +175,36 @@ class TranscriptStore internal constructor(private val directory: File) {
     fun delete(key: String, profile: TranscriptionProfile): Boolean =
         profileFiles(key, profile).all { !it.exists() || it.delete() }
 
-    fun write(key: String, transcript: String, profile: TranscriptionProfile) {
+    fun checkCapacity(key: String, profile: TranscriptionProfile) = synchronized(writeLock) {
+        requireCapacity(directory.resolve(transcriptFileName(key, profile)), MAX_TRANSCRIPT_BYTES)
+    }
+
+    fun write(key: String, transcript: String, profile: TranscriptionProfile) = synchronized(writeLock) {
         require(transcript.isNotBlank()) { "Transcript is blank" }
+        val bytes = transcriptBytes(transcript)
         check(directory.mkdirs() || directory.isDirectory) { "Cannot create transcript directory" }
-        writeAtomically(directory.resolve(transcriptFileName(key, profile)), transcript)
+        val target = directory.resolve(transcriptFileName(key, profile))
+        requireCapacity(target, bytes.size)
+        writeAtomically(target, bytes)
+    }
+
+    private fun requireCapacity(target: File, bytes: Int) {
+        var files = 0
+        var total = 0L
+        if (directory.exists()) {
+            Files.newDirectoryStream(directory.toPath(), "*.txt").use { entries ->
+                for (entry in entries) {
+                    if (entry.toFile() == target || !Files.isRegularFile(entry)) continue
+                    files++
+                    val size = Files.size(entry)
+                    if (files >= MAX_TRANSCRIPT_FILES || size > MAX_TRANSCRIPT_STORE_BYTES - total) {
+                        throw TranscriptStorageException()
+                    }
+                    total += size
+                }
+            }
+        }
+        if (bytes > MAX_TRANSCRIPT_STORE_BYTES - total) throw TranscriptStorageException()
     }
 
     private fun profileFiles(key: String, profile: TranscriptionProfile): List<File> = buildList {
@@ -157,19 +212,27 @@ class TranscriptStore internal constructor(private val directory: File) {
         legacyTranscriptFileName(key, profile)?.let { add(directory.resolve(it)) }
     }.distinct()
 
-    private fun writeAtomically(target: File, transcript: String) {
+    private fun writeAtomically(target: File, bytes: ByteArray) {
         val temporary = directory.resolve("${target.name}.tmp")
-        temporary.writeText(transcript, Charsets.UTF_8)
         try {
-            Files.move(
-                temporary.toPath(),
-                target.toPath(),
-                StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING,
-            )
-        } catch (_: AtomicMoveNotSupportedException) {
-            Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            temporary.writeBytes(bytes)
+            try {
+                Files.move(
+                    temporary.toPath(),
+                    target.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            temporary.delete()
         }
+    }
+
+    private companion object {
+        val writeLock = Any()
     }
 }
 

@@ -100,6 +100,7 @@ class CloudTranscriptionWorker(
             ?: return Result.success(workDataOf(KEY_ERROR to "API key is not configured"))
 
         return try {
+            withContext(Dispatchers.IO) { TranscriptStore(applicationContext).checkCapacity(key, profile) }
             setForeground(createForegroundInfo(provider, key))
             val recording = Recording(uri, name, size, lastModified = 0, key = key)
             val transcript = withContext(Dispatchers.IO) {
@@ -209,17 +210,22 @@ class CloudTranscriptionQueue(context: Context) {
         profile: TranscriptionProfile,
         automatic: Boolean = false,
         userConfirmed: Boolean = false,
-    ) = withContext(Dispatchers.IO) {
+    ) = withTranscriptionAdmission {
         require(profile.model.provider != null) { "Cloud queue requires a cloud model" }
+        if (automatic && transcripts.exists(recording.key, profile)) return@withTranscriptionAdmission
         val uniqueName = CloudTranscriptionWorker.recordingTag(recording.key, profile)
+        val sourceTag = recording.admissionTag(profile)
+        if (manager.getWorkInfosByTag(sourceTag).get().any { it.state.isActive() }) {
+            return@withTranscriptionAdmission
+        }
         val existing = manager.getWorkInfosByTag(uniqueName).get()
-        if (existing.any { it.state.isActive() }) return@withContext
+        if (existing.any { it.state.isActive() }) return@withTranscriptionAdmission
         if (automatic && existing.any {
                 it.state == WorkInfo.State.SUCCEEDED &&
                     it.outputData.getString(CloudTranscriptionWorker.KEY_ERROR) != null
             }
         ) {
-            return@withContext
+            return@withTranscriptionAdmission
         }
         val request = OneTimeWorkRequestBuilder<CloudTranscriptionWorker>()
             .setInputData(CloudTranscriptionWorker.input(recording, profile, userConfirmed))
@@ -231,9 +237,11 @@ class CloudTranscriptionQueue(context: Context) {
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .addTag(CloudTranscriptionWorker.GLOBAL_TAG)
             .addTag(uniqueName)
+            .addTag(sourceTag)
             .addTag("$ENQUEUED_TAG_PREFIX${System.currentTimeMillis()}")
             .build()
-        manager.beginUniqueWork(QUEUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request).enqueue()
+        manager.beginUniqueWork(QUEUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request).enqueue().result.get()
+        Unit
     }
 
     suspend fun cancelAll() = withContext(Dispatchers.IO) {

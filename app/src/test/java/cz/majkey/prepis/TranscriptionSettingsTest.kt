@@ -44,8 +44,8 @@ class TranscriptionSettingsTest {
 
     @Test
     fun `detected language uses the most frequent nonblank code`() {
-        assertEquals("cs", selectDetectedLanguage(listOf("cs", "", "fr", "cs")))
-        assertNull(selectDetectedLanguage(listOf("", " ")))
+        assertEquals("cs", LanguageVotes().apply { listOf("cs", "", "fr", "cs").forEach(::add) }.selected())
+        assertNull(LanguageVotes().apply { listOf("", " ").forEach(::add) }.selected())
     }
 
     @Test

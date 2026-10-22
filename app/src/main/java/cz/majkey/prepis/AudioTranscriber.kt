@@ -20,13 +20,16 @@ internal class AudioTranscriber(
     private val resolver: ContentResolver,
     private val models: LocalModels,
     private val language: TranscriptionLanguage = TranscriptionLanguage.CZECH,
+    private val checkCancelled: () -> Unit,
 ) {
     fun transcribe(uri: Uri): String {
+        checkCancelled()
         if (useOmnilingual(language)) return transcribeOmnilingual(uri)
 
         val whisper = transcribeWhisper(uri)
+        checkCancelled()
         if (language != TranscriptionLanguage.AUTO) return whisper.text
-        val detected = selectDetectedLanguage(whisper.detectedLanguages)
+        val detected = whisper.detectedLanguage
             ?.let { runCatching { TranscriptionLanguage.fromId(it) }.getOrNull() }
         return if (detected != null && useOmnilingual(detected)) {
             transcribeOmnilingual(uri)
@@ -37,8 +40,8 @@ internal class AudioTranscriber(
 
     private fun transcribeWhisper(uri: Uri): WhisperTranscript {
         val recognizer = createWhisperRecognizer()
-        val parts = mutableListOf<String>()
-        val detectedLanguages = mutableListOf<String>()
+        val transcript = TranscriptAccumulator()
+        val detectedLanguages = LanguageVotes()
 
         try {
             decodeAudio(uri) { samples, sampleRate ->
@@ -47,8 +50,8 @@ internal class AudioTranscriber(
                     stream.acceptWaveform(samples, sampleRate)
                     recognizer.decode(stream)
                     val result = recognizer.getResult(stream)
-                    result.text.trim().takeIf(String::isNotEmpty)?.let(parts::add)
-                    detectedLanguages += result.lang
+                    transcript.add(result.text.trim())
+                    detectedLanguages.add(result.lang)
                 } finally {
                     stream.release()
                 }
@@ -57,21 +60,19 @@ internal class AudioTranscriber(
             recognizer.release()
         }
 
-        return WhisperTranscript(requireTranscript(parts), detectedLanguages)
+        return WhisperTranscript(transcript.finish(), detectedLanguages.selected())
     }
 
     private fun transcribeOmnilingual(uri: Uri): String {
         val recognizer = createOmnilingualRecognizer()
-        val parts = mutableListOf<String>()
+        val transcript = TranscriptAccumulator()
         try {
             decodeAudio(uri) { samples, sampleRate ->
                 val stream = recognizer.createStream()
                 try {
                     stream.acceptWaveform(samples, sampleRate)
                     recognizer.decode(stream)
-                    formatCtcPart(recognizer.getResult(stream).text)
-                        .takeIf(String::isNotEmpty)
-                        ?.let(parts::add)
+                    transcript.add(formatCtcPart(recognizer.getResult(stream).text))
                 } finally {
                     stream.release()
                 }
@@ -79,11 +80,7 @@ internal class AudioTranscriber(
         } finally {
             recognizer.release()
         }
-        return requireTranscript(parts)
-    }
-
-    private fun requireTranscript(parts: List<String>): String = formatTranscript(parts).ifBlank {
-        throw IOException("The recording contains no recognizable speech")
+        return transcript.finish()
     }
 
     private fun createWhisperRecognizer(): OfflineRecognizer {
@@ -116,13 +113,16 @@ internal class AudioTranscriber(
         return OfflineRecognizer(config = OfflineRecognizerConfig(modelConfig = model))
     }
 
-    private fun decodeAudio(uri: Uri, consume: (FloatArray, Int) -> Unit) {
+    internal fun decodeAudio(uri: Uri, consume: (FloatArray, Int) -> Unit) {
+        checkCancelled()
         val descriptor = resolver.openFileDescriptor(uri, "r")
             ?: throw IOException("The recording cannot be opened")
         descriptor.use {
             val extractor = MediaExtractor()
             try {
+                checkCancelled()
                 extractor.setDataSource(it.fileDescriptor)
+                checkCancelled()
                 val trackIndex = (0 until extractor.trackCount).firstOrNull { index ->
                     extractor.getTrackFormat(index)
                         .getString(MediaFormat.KEY_MIME)
@@ -130,7 +130,11 @@ internal class AudioTranscriber(
                 } ?: throw IOException("The file contains no audio track")
 
                 extractor.selectTrack(trackIndex)
-                decodeTrack(extractor, extractor.getTrackFormat(trackIndex), consume)
+                decodeTrack(extractor, extractor.getTrackFormat(trackIndex)) { samples, sampleRate ->
+                    checkCancelled()
+                    consume(samples, sampleRate)
+                    checkCancelled()
+                }
             } finally {
                 extractor.release()
             }
@@ -160,6 +164,7 @@ internal class AudioTranscriber(
             var idleCycles = 0
 
             while (!outputEnded) {
+                checkCancelled()
                 var progressed = false
                 if (!inputEnded) {
                     val inputIndex = codec.dequeueInputBuffer(CODEC_TIMEOUT_US)
@@ -241,7 +246,7 @@ internal class AudioTranscriber(
 
     private data class WhisperTranscript(
         val text: String,
-        val detectedLanguages: List<String>,
+        val detectedLanguage: String?,
     )
 }
 
@@ -251,13 +256,38 @@ internal fun localWhisperLanguage(language: TranscriptionLanguage): String =
 internal fun useOmnilingual(language: TranscriptionLanguage): Boolean =
     language == TranscriptionLanguage.CZECH || language == TranscriptionLanguage.FRENCH
 
-internal fun selectDetectedLanguage(languages: List<String>): String? = languages
-    .map { it.trim().lowercase() }
-    .filter(String::isNotEmpty)
-    .groupingBy { it }
-    .eachCount()
-    .maxByOrNull { it.value }
-    ?.key
+internal class LanguageVotes {
+    private val counts = linkedMapOf<String, Long>()
+
+    fun add(raw: String) {
+        val language = raw.trim().lowercase()
+        if (language.isEmpty()) return
+        if (language.length > 16 || language !in counts && counts.size >= 128) {
+            throw IOException("The recognizer returned too many language identifiers")
+        }
+        counts[language] = counts.getOrDefault(language, 0L) + 1
+    }
+
+    fun selected(): String? = counts.maxByOrNull { it.value }?.key
+}
+
+internal class TranscriptAccumulator {
+    private val text = StringBuilder()
+    private var bytes = 0
+
+    fun add(part: String) {
+        if (part.isEmpty()) return
+        val additional = transcriptBytes(part).size + if (text.isEmpty()) 0 else 1
+        if (additional > MAX_TRANSCRIPT_BYTES - bytes) throw TranscriptSizeException()
+        if (text.isNotEmpty()) text.append(' ')
+        text.append(part)
+        bytes += additional
+    }
+
+    fun finish(): String = formatTranscript(listOf(text.toString())).ifBlank {
+        throw IOException("The recording contains no recognizable speech")
+    }.also { transcriptBytes(it) }
+}
 
 internal fun formatCtcPart(raw: String): String {
     val text = raw.trim()
