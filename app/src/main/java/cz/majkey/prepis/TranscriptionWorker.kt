@@ -266,7 +266,7 @@ internal class ModelStore(context: Context) {
             }
             BufferedInputStream(connection.inputStream).use { input ->
                 FileOutputStream(partial, append).buffered().use { output ->
-                    input.copyTo(output, DOWNLOAD_BUFFER_SIZE)
+                    copyBounded(input, output, model.size - if (append) offset else 0)
                 }
             }
         } finally {
@@ -307,7 +307,6 @@ internal class ModelStore(context: Context) {
                 "resolve/$OMNILINGUAL_REVISION"
         const val CONNECT_TIMEOUT_MS = 30_000
         const val READ_TIMEOUT_MS = 60_000
-        const val DOWNLOAD_BUFFER_SIZE = 1024 * 1024
         const val HASH_BUFFER_SIZE = 1024 * 1024
 
         val WHISPER_FILES = listOf(

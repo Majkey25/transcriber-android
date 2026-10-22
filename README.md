@@ -73,7 +73,7 @@ and the 98% target status.
 
 ## Build
 
-Requires JDK 17 and Android SDK 36.
+Requires JDK 17 and Android SDK 37.
 
 ```powershell
 .\gradlew.bat testDebugUnitTest lintDebug assembleDebug
@@ -84,8 +84,15 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 ## Current limits
 
 - Direct `.m4a` files only; subfolders are not scanned.
+- Folders are limited to 10,000 direct entries, recording names to 512 characters,
+  and document URIs to 2,048 characters. Oversized inventories are rejected before queueing.
+- Local PCM input is limited to 192 kHz and 32 channels before allocating audio chunks.
 - Cloud files above the provider-safe direct-upload limit are rejected instead of
   being split into multiple billable requests.
+- A cloud job has a 30-minute network deadline across upload, processing, and response.
+  Expiration disconnects the active request and requires a manual retry.
+- Revoking cloud consent cancels active network calls. Gemini cleanup gets a separate
+  30-second deadline after cancellation or timeout; deletion remains best effort.
 - The local model is less accurate than the recommended cloud model.
 - No audio player or speaker diarization UI.
 - Speech recognition is probabilistic. Verify important transcripts against the

@@ -144,11 +144,11 @@ internal class AudioTranscriber(
     ) {
         val mime = inputFormat.getString(MediaFormat.KEY_MIME)
             ?: throw IOException("The audio track has no MIME type")
-        val codec = MediaCodec.createDecoderByType(mime)
         var sampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
         var channelCount = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
         var pcmEncoding = AudioFormat.ENCODING_PCM_16BIT
-        var chunker = PcmChunker(channelCount, sampleRate * CHUNK_SECONDS)
+        var chunker = PcmChunker(channelCount, pcmChunkSamples(sampleRate))
+        val codec = MediaCodec.createDecoderByType(mime)
 
         try {
             codec.configure(inputFormat, null, null, 0)
@@ -193,7 +193,7 @@ internal class AudioTranscriber(
                         } else {
                             AudioFormat.ENCODING_PCM_16BIT
                         }
-                        chunker = PcmChunker(channelCount, sampleRate * CHUNK_SECONDS)
+                        chunker = PcmChunker(channelCount, pcmChunkSamples(sampleRate))
                         progressed = true
                     }
 
@@ -235,7 +235,6 @@ internal class AudioTranscriber(
         const val OMNILINGUAL_TOKENS_FILE = "tokens.txt"
 
         private const val MAX_THREADS = 4
-        private const val CHUNK_SECONDS = 25
         private const val CODEC_TIMEOUT_US = 10_000L
         private const val MAX_IDLE_CYCLES = 3_000
     }
@@ -271,13 +270,13 @@ internal class PcmChunker(
     private val channelCount: Int,
     private val chunkSamples: Int,
 ) {
+    init {
+        require(channelCount in 1..32) { "Unsupported audio channel count" }
+        require(chunkSamples in 1..MAX_CHUNK_SAMPLES) { "Unsupported audio chunk size" }
+    }
+
     private var chunk = FloatArray(chunkSamples)
     private var size = 0
-
-    init {
-        require(channelCount > 0) { "Channel count must be positive" }
-        require(chunkSamples > 0) { "Chunk size must be positive" }
-    }
 
     fun add(buffer: ByteBuffer, pcmEncoding: Int): List<FloatArray> {
         val bytesPerSample = when (pcmEncoding) {
@@ -309,3 +308,12 @@ internal class PcmChunker(
 
     fun finish(): FloatArray? = if (size == 0) null else chunk.copyOf(size)
 }
+
+internal fun pcmChunkSamples(sampleRate: Int): Int {
+    require(sampleRate in 1..MAX_SAMPLE_RATE) { "Unsupported audio sample rate" }
+    return sampleRate * CHUNK_SECONDS
+}
+
+private const val CHUNK_SECONDS = 25
+private const val MAX_SAMPLE_RATE = 192_000
+private const val MAX_CHUNK_SAMPLES = MAX_SAMPLE_RATE * CHUNK_SECONDS

@@ -3,19 +3,41 @@ package cz.majkey.prepis
 import android.content.ContentResolver
 import android.net.Uri
 import java.io.BufferedInputStream
-import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.SocketTimeoutException
 import java.net.URL
-import java.util.UUID
-import javax.net.ssl.HttpsURLConnection
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okio.BufferedSink
 import org.json.JSONArray
 import org.json.JSONObject
 
 internal class CloudClient(private val resolver: ContentResolver) {
-    fun transcribe(profile: TranscriptionProfile, rawKey: String, recording: Recording): String {
+    private val deadline = HttpDeadline(TimeUnit.MINUTES.toMillis(30))
+
+    suspend fun transcribe(profile: TranscriptionProfile, rawKey: String, recording: Recording): String {
+        currentCoroutineContext().ensureActive()
+        deadline.check()
         val provider = profile.model.provider
             ?: throw IllegalArgumentException("Local transcription does not use a cloud client")
         require(profile.model.supports(profile.language)) { "The model does not support this language" }
@@ -63,7 +85,7 @@ internal class CloudClient(private val resolver: ContentResolver) {
         }
     }
 
-    private fun multipartTranscript(
+    private suspend fun multipartTranscript(
         endpoint: String,
         host: String,
         key: String,
@@ -71,36 +93,17 @@ internal class CloudClient(private val resolver: ContentResolver) {
         maxBytes: Long,
         fields: LinkedHashMap<String, String>,
     ): String {
-        val boundary = "Transcript-${UUID.randomUUID()}"
-        val connection = openHttps(endpoint, host).apply {
-            requestMethod = "POST"
-            doOutput = true
-            setChunkedStreamingMode(NETWORK_BUFFER_SIZE)
-            setRequestProperty("Authorization", "Bearer $key")
-            setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-        }
-
-        try {
-            BufferedOutputStream(connection.outputStream, NETWORK_BUFFER_SIZE).use { output ->
-                fields.forEach { (name, value) -> writeField(output, boundary, name, value) }
-                writeUtf8(
-                    output,
-                    "--$boundary\r\n" +
-                        "Content-Disposition: form-data; name=\"file\"; filename=\"${safeUploadName(recording.name)}\"\r\n" +
-                        "Content-Type: audio/mp4\r\n\r\n",
-                )
-                resolver.openInputStream(recording.uri)?.use { input ->
-                    copyBounded(input, output, maxBytes)
-                } ?: throw IOException("The recording cannot be opened")
-                writeUtf8(output, "\r\n--$boundary--\r\n")
-            }
-            return formatProviderTranscript(parseCloudText(readResponse(connection)))
-        } finally {
-            connection.disconnect()
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
+            fields.forEach { (name, value) -> addFormDataPart(name, value) }
+            addFormDataPart("file", safeUploadName(recording.name), audioBody(recording.uri, maxBytes))
+        }.build()
+        val request = request(endpoint, host).header("Authorization", "Bearer $key").post(body).build()
+        return deadline.execute(request) { response ->
+            formatProviderTranscript(parseCloudText(deadline.readResponse(response)))
         }
     }
 
-    private fun geminiTranscript(
+    private suspend fun geminiTranscript(
         profile: TranscriptionProfile,
         key: String,
         recording: Recording,
@@ -117,92 +120,70 @@ internal class CloudClient(private val resolver: ContentResolver) {
         }
     }
 
-    private fun startGeminiUpload(key: String, name: String, length: Long): String {
+    private suspend fun startGeminiUpload(key: String, name: String, length: Long): String {
         val metadata = JSONObject()
             .put("file", JSONObject().put("display_name", safeUploadName(name)))
             .toString()
-            .toByteArray(Charsets.UTF_8)
-        val connection = openHttps(GEMINI_UPLOAD_URL, GEMINI_HOST).apply {
-            requestMethod = "POST"
-            doOutput = true
-            setFixedLengthStreamingMode(metadata.size)
-            setRequestProperty("x-goog-api-key", key)
-            setRequestProperty("X-Goog-Upload-Protocol", "resumable")
-            setRequestProperty("X-Goog-Upload-Command", "start")
-            setRequestProperty("X-Goog-Upload-Header-Content-Length", length.toString())
-            setRequestProperty("X-Goog-Upload-Header-Content-Type", "audio/mp4")
-            setRequestProperty("Content-Type", "application/json")
-        }
-
-        try {
-            connection.outputStream.use { it.write(metadata) }
-            readResponse(connection, allowEmpty = true)
-            val uploadUrl = connection.getHeaderField("X-Goog-Upload-URL")
+        val request = request(GEMINI_UPLOAD_URL, GEMINI_HOST)
+            .header("x-goog-api-key", key)
+            .header("X-Goog-Upload-Protocol", "resumable")
+            .header("X-Goog-Upload-Command", "start")
+            .header("X-Goog-Upload-Header-Content-Length", length.toString())
+            .header("X-Goog-Upload-Header-Content-Type", "audio/mp4")
+            .post(metadata.toRequestBody("application/json".toMediaType()))
+            .build()
+        return deadline.execute(request) { response ->
+            deadline.readResponse(response, allowEmpty = true)
+            val uploadUrl = response.header("X-Goog-Upload-URL")
                 ?: throw IOException("Gemini did not return an upload URL")
             validateHttpsUrl(uploadUrl, GEMINI_HOST)
-            return uploadUrl
-        } finally {
-            connection.disconnect()
+            uploadUrl
         }
     }
 
-    private fun uploadGeminiFile(
+    private suspend fun uploadGeminiFile(
         uploadUrl: String,
         key: String,
         uri: Uri,
         length: Long,
         maxBytes: Long,
     ): GeminiFile {
-        val connection = openHttps(uploadUrl, GEMINI_HOST).apply {
-            requestMethod = "POST"
-            doOutput = true
-            setFixedLengthStreamingMode(length)
-            setRequestProperty("x-goog-api-key", key)
-            setRequestProperty("Content-Length", length.toString())
-            setRequestProperty("X-Goog-Upload-Offset", "0")
-            setRequestProperty("X-Goog-Upload-Command", "upload, finalize")
-        }
-
-        try {
-            val copied = resolver.openInputStream(uri)?.use { input ->
-                BufferedOutputStream(connection.outputStream, NETWORK_BUFFER_SIZE).use { output ->
-                    copyBounded(input, output, maxBytes)
-                }
-            } ?: throw IOException("The recording cannot be opened")
-            if (copied != length) throw IOException("The recording changed during upload")
-            return parseGeminiFile(JSONObject(readResponse(connection)).getJSONObject("file"))
-        } finally {
-            connection.disconnect()
+        val request = request(uploadUrl, GEMINI_HOST)
+            .header("x-goog-api-key", key)
+            .header("X-Goog-Upload-Offset", "0")
+            .header("X-Goog-Upload-Command", "upload, finalize")
+            .post(audioBody(uri, maxBytes, length))
+            .build()
+        return deadline.execute(request) { response ->
+            parseGeminiFile(JSONObject(deadline.readResponse(response)).getJSONObject("file"))
         }
     }
 
-    private fun waitForGeminiFile(key: String, initial: GeminiFile): GeminiFile {
+    private suspend fun waitForGeminiFile(key: String, initial: GeminiFile): GeminiFile {
         var current = initial
         repeat(GEMINI_PROCESSING_ATTEMPTS) {
+            currentCoroutineContext().ensureActive()
+            deadline.check()
             when (current.state.uppercase()) {
                 "ACTIVE" -> return current
                 "FAILED" -> throw IOException("Gemini could not process the recording")
             }
-            Thread.sleep(GEMINI_POLL_INTERVAL_MS)
+            delay(GEMINI_POLL_INTERVAL_MS)
             current = getGeminiFile(key, current.name)
         }
         throw IOException("Gemini file processing timed out")
     }
 
-    private fun getGeminiFile(key: String, name: String): GeminiFile {
+    private suspend fun getGeminiFile(key: String, name: String): GeminiFile {
         val safeName = validateGeminiFileName(name)
-        val connection = openHttps("$GEMINI_FILES_URL/$safeName", GEMINI_HOST).apply {
-            requestMethod = "GET"
-            setRequestProperty("x-goog-api-key", key)
-        }
-        return try {
-            parseGeminiFile(JSONObject(readResponse(connection)))
-        } finally {
-            connection.disconnect()
+        val request = request("$GEMINI_FILES_URL/$safeName", GEMINI_HOST)
+            .header("x-goog-api-key", key).get().build()
+        return deadline.execute(request) { response ->
+            parseGeminiFile(JSONObject(deadline.readResponse(response)))
         }
     }
 
-    private fun generateGeminiTranscript(
+    private suspend fun generateGeminiTranscript(
         profile: TranscriptionProfile,
         key: String,
         file: GeminiFile,
@@ -224,36 +205,20 @@ internal class CloudClient(private val resolver: ContentResolver) {
                 JSONArray().put(JSONObject().put("role", "user").put("parts", parts)),
             )
             .toString()
-            .toByteArray(Charsets.UTF_8)
-        val connection = openHttps(geminiGenerateUrl(profile), GEMINI_HOST).apply {
-            requestMethod = "POST"
-            doOutput = true
-            setFixedLengthStreamingMode(body.size)
-            setRequestProperty("x-goog-api-key", key)
-            setRequestProperty("Content-Type", "application/json")
-        }
-
-        return try {
-            connection.outputStream.use { it.write(body) }
-            parseGeminiText(readResponse(connection))
-        } finally {
-            connection.disconnect()
+        val request = request(geminiGenerateUrl(profile), GEMINI_HOST)
+            .header("x-goog-api-key", key)
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+        return deadline.execute(request) { response ->
+            parseGeminiText(deadline.readResponse(response))
         }
     }
 
-    private fun deleteGeminiFile(key: String, name: String) {
-        runCatching {
-            val safeName = validateGeminiFileName(name)
-            val connection = openHttps("$GEMINI_FILES_URL/$safeName", GEMINI_HOST).apply {
-                requestMethod = "DELETE"
-                setRequestProperty("x-goog-api-key", key)
-            }
-            try {
-                readResponse(connection, allowEmpty = true)
-            } finally {
-                connection.disconnect()
-            }
-        }
+    private suspend fun deleteGeminiFile(key: String, name: String) {
+        val safeName = validateGeminiFileName(name)
+        val request = request("$GEMINI_FILES_URL/$safeName", GEMINI_HOST)
+            .header("x-goog-api-key", key).delete().build()
+        deleteCloudFile(request)
     }
 
     private fun parseGeminiText(body: String): String {
@@ -289,6 +254,31 @@ internal class CloudClient(private val resolver: ContentResolver) {
         val state: String,
     )
 
+    private fun request(rawUrl: String, expectedHost: String): Request.Builder =
+        Request.Builder().url(validateHttpsUrl(rawUrl, expectedHost))
+
+    internal suspend fun audioBody(uri: Uri, maxBytes: Long, length: Long = -1): RequestBody {
+        val context = currentCoroutineContext()
+        return object : RequestBody() {
+            override fun contentType() = "audio/mp4".toMediaType()
+            override fun contentLength() = length
+            override fun isOneShot() = true
+            override fun writeTo(sink: BufferedSink) {
+                val copied = try {
+                    resolver.openInputStream(uri)?.use { input ->
+                        copyBounded(input, sink.outputStream(), maxBytes) {
+                            if (!context.isActive) throw IOException("Cloud upload was cancelled")
+                            deadline.check()
+                        }
+                    } ?: throw IOException("The recording cannot be opened")
+                } catch (exception: RuntimeException) {
+                    throw IOException("The recording cannot be read", exception)
+                }
+                if (length >= 0 && copied != length) throw IOException("The recording changed during upload")
+            }
+        }
+    }
+
     private companion object {
         const val OPENAI_HOST = "api.openai.com"
         const val OPENAI_URL = "https://api.openai.com/v1/audio/transcriptions"
@@ -300,7 +290,6 @@ internal class CloudClient(private val resolver: ContentResolver) {
         const val GEMINI_UPLOAD_URL = "https://generativelanguage.googleapis.com/upload/v1beta/files"
         const val GEMINI_FILES_URL = "https://generativelanguage.googleapis.com/v1beta"
         const val MEGABYTE = 1024L * 1024L
-        const val NETWORK_BUFFER_SIZE = 64 * 1024
         const val GEMINI_PROCESSING_ATTEMPTS = 300
         const val GEMINI_POLL_INTERVAL_MS = 1_000L
         val GEMINI_FILE_NAME = Regex("files/[A-Za-z0-9_-]+")
@@ -372,66 +361,108 @@ private fun CloudProvider.maxUploadBytes(): Long = when (this) {
     CloudProvider.GEMINI -> 500L * 1024L * 1024L
 }
 
-private fun openHttps(rawUrl: String, expectedHost: String): HttpsURLConnection {
-    val url = validateHttpsUrl(rawUrl, expectedHost)
-    return (url.openConnection() as HttpsURLConnection).apply {
-        connectTimeout = 30_000
-        readTimeout = 300_000
-        useCaches = false
-        instanceFollowRedirects = false
-    }
-}
-
 private fun validateHttpsUrl(rawUrl: String, expectedHost: String): URL = URL(rawUrl).also {
     require(it.protocol == "https" && it.host == expectedHost) { "Unexpected provider URL" }
 }
 
-private fun writeField(output: OutputStream, boundary: String, name: String, value: String) {
-    writeUtf8(
-        output,
-        "--$boundary\r\n" +
-            "Content-Disposition: form-data; name=\"$name\"\r\n\r\n" +
-            "$value\r\n",
-    )
-}
-
-private fun writeUtf8(output: OutputStream, value: String) {
-    output.write(value.toByteArray(Charsets.UTF_8))
-}
-
-private fun copyBounded(input: InputStream, output: OutputStream, maxBytes: Long): Long {
+internal fun copyBounded(
+    input: InputStream,
+    output: OutputStream,
+    maxBytes: Long,
+    checkDeadline: () -> Unit = {},
+): Long {
     var total = 0L
     val buffer = ByteArray(64 * 1024)
     while (true) {
+        checkDeadline()
         val count = input.read(buffer)
+        checkDeadline()
         if (count < 0) return total
         total += count
-        if (total > maxBytes) throw IOException("The recording exceeds the upload limit")
+        if (total > maxBytes) throw IOException("The input exceeds the allowed size")
         output.write(buffer, 0, count)
     }
 }
 
-private fun readResponse(connection: HttpsURLConnection, allowEmpty: Boolean = false): String {
-    val code = connection.responseCode
-    val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-    val body = stream?.use { readBounded(it, 1024 * 1024) }.orEmpty()
-    if (code !in 200..299) throw CloudApiException(code)
-    if (!allowEmpty && body.isBlank()) throw IOException("Provider returned an empty response")
-    return body
-}
-
-private fun readBounded(input: InputStream, maxBytes: Int): String {
+private fun readBounded(input: InputStream, maxBytes: Int, deadline: HttpDeadline): String {
     val output = ByteArrayOutputStream()
     BufferedInputStream(input).use { buffered ->
         val buffer = ByteArray(16 * 1024)
         while (true) {
+            deadline.check()
             val count = buffered.read(buffer)
+            deadline.check()
             if (count < 0) break
             if (output.size() + count > maxBytes) throw IOException("Provider response is too large")
             output.write(buffer, 0, count)
         }
     }
     return output.toString(Charsets.UTF_8.name())
+}
+
+internal suspend fun deleteCloudFile(request: Request) {
+    withContext(NonCancellable) {
+        runCatching {
+            val cleanup = HttpDeadline(TimeUnit.SECONDS.toMillis(30))
+            cleanup.execute(request) { cleanup.readResponse(it, allowEmpty = true) }
+        }
+    }
+}
+
+private fun HttpDeadline.readResponse(response: Response, allowEmpty: Boolean = false): String {
+    check()
+    val body = response.body.byteStream().use { readBounded(it, 1024 * 1024, this) }
+    check()
+    if (!response.isSuccessful) throw CloudApiException(response.code)
+    if (!allowEmpty && body.isBlank()) throw IOException("Provider returned an empty response")
+    return body
+}
+
+internal class HttpDeadline(timeoutMillis: Long) {
+    private val expiresAt = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+
+    fun check() {
+        if (System.nanoTime() >= expiresAt) {
+            throw SocketTimeoutException("Cloud transcription exceeded its time limit")
+        }
+    }
+
+    suspend fun <T> execute(request: Request, consume: (Response) -> T): T {
+        check()
+        val call = CLIENT.newCall(request)
+        call.timeout().deadlineNanoTime(expiresAt)
+        return suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    continuation.resumeWithException(e)
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    try {
+                        val result = response.use {
+                            if (!continuation.isActive) return
+                            consume(it)
+                        }
+                        continuation.resume(result)
+                    } catch (exception: Exception) {
+                        continuation.resumeWithException(exception)
+                    }
+                }
+            })
+        }
+    }
+
+    private companion object {
+        val CLIENT = OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.MINUTES)
+            .writeTimeout(5, TimeUnit.MINUTES)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .retryOnConnectionFailure(false)
+            .build()
+    }
 }
 
 internal class CloudApiException(val statusCode: Int) :

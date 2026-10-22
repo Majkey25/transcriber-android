@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3 - 2026-10-22
+
+### Fixed
+
+- Bound model downloads, folder inventories, recording metadata, and PCM dimensions before writing or allocating data.
+- Cancel cloud network calls when consent is revoked and enforce a 30-minute job deadline, with separate best-effort Gemini cleanup.
+- Exclude app data from every supported backup and device-transfer domain.
+
 ## 0.3.2 - 2026-10-05
 
 ### Changed
