@@ -14,6 +14,7 @@ android {
         targetSdk = 36
         versionCode = 7
         versionName = "0.3.3"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
@@ -72,6 +73,9 @@ dependencies {
     testImplementation("org.json:json:20260719")
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("androidx.work:work-testing:2.11.2")
+
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("junit:junit:4.13.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

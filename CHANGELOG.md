@@ -7,6 +7,8 @@
 - Bound model downloads, folder inventories, recording metadata, and PCM dimensions before writing or allocating data.
 - Cancel cloud network calls when consent is revoked and enforce a 30-minute job deadline, with separate best-effort Gemini cleanup.
 - Exclude app data from every supported backup and device-transfer domain.
+- Stop local decoding at cancellation checkpoints and coalesce active jobs for the same recording URI and profile.
+- Bound transcript output and retained storage without deleting existing history; reject work when capacity is unavailable.
 
 ## 0.3.2 - 2026-10-05
 
