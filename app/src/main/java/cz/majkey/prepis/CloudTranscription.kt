@@ -227,6 +227,7 @@ class CloudTranscriptionQueue(context: Context) {
         ) {
             return@withTranscriptionAdmission
         }
+        manager.checkTranscriptionCapacity()
         val request = OneTimeWorkRequestBuilder<CloudTranscriptionWorker>()
             .setInputData(CloudTranscriptionWorker.input(recording, profile, userConfirmed))
             .setConstraints(

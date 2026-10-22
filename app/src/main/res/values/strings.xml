@@ -16,6 +16,8 @@
     <string name="folder_read_failed">The folder could not be read.</string>
     <string name="folder_limit_exceeded">Choose a folder with at most %1$d files and folders, recording names up to 512 characters, and shorter document paths.</string>
     <string name="folder_change_failed">The folder could not be changed.</string>
+    <string name="queue_full_title">Transcription queue is full</string>
+    <string name="queue_full_message">At most %1$d local and cloud transcriptions can be waiting or running together. Existing jobs and transcripts were kept. Wait for jobs to finish, then retry or reopen the app to add remaining recordings.</string>
     <string name="empty_folder">No M4A recordings were found in this folder.</string>
     <string name="try_again">Try again</string>
     <string name="status_waiting">Waiting for transcription</string>

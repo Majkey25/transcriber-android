@@ -187,6 +187,7 @@ class TranscriptionQueue(context: Context) {
             return@withTranscriptionAdmission
         }
 
+        manager.checkTranscriptionCapacity()
         val request = OneTimeWorkRequestBuilder<TranscriptionWorker>()
             .setInputData(TranscriptionWorker.input(recording, profile))
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4 - 2026-10-22
+
+### Fixed
+
+- Bound waiting and running transcription jobs to 10,000 across both queues, including jobs queued by older versions.
+- Explain when the queue is full without losing existing jobs, transcripts, or settings.
+
 ## 0.3.3 - 2026-10-22
 
 ### Fixed
