@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.core.content.edit
 import java.io.File
+import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -85,12 +86,18 @@ class RecordingScanner(context: Context) {
             val sizeIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE)
             val modifiedIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
 
+            var rows = 0
             while (cursor.moveToNext()) {
+                if (++rows > MAX_FOLDER_DOCUMENTS) throw RecordingScanLimitException()
                 val name = cursor.getString(nameIndex) ?: continue
                 if (!isM4a(name)) continue
+                val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, cursor.getString(idIndex))
+                if (name.length > 512 || uri.toString().length > 2_048) {
+                    throw RecordingScanLimitException()
+                }
 
                 recordings += Recording(
-                    uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, cursor.getString(idIndex)),
+                    uri = uri,
                     name = name,
                     size = cursor.getLong(sizeIndex).coerceAtLeast(0),
                     lastModified = cursor.getLong(modifiedIndex).coerceAtLeast(0),
@@ -98,7 +105,7 @@ class RecordingScanner(context: Context) {
             }
         }
 
-        return recordings.sortedByDescending(Recording::lastModified)
+        return recordings.distinctBy(Recording::uri).sortedByDescending(Recording::lastModified)
     }
 
     private companion object {
@@ -110,6 +117,10 @@ class RecordingScanner(context: Context) {
         )
     }
 }
+
+internal const val MAX_FOLDER_DOCUMENTS = 10_000
+
+internal class RecordingScanLimitException : IOException()
 
 class TranscriptStore internal constructor(private val directory: File) {
     constructor(context: Context) : this(context.filesDir.resolve("transcripts"))

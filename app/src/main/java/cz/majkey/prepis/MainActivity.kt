@@ -224,6 +224,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 enqueueMissing(files)
             } catch (exception: CancellationException) {
                 throw exception
+            } catch (_: RecordingScanLimitException) {
+                recordings.value = emptyList()
+                _folderError.value = app.getString(R.string.folder_limit_exceeded, MAX_FOLDER_DOCUMENTS)
             } catch (_: SecurityException) {
                 folders.clear()
                 _folderUri.value = null

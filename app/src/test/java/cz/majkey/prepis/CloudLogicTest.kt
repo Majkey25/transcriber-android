@@ -1,5 +1,8 @@
 package cz.majkey.prepis
 
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -7,6 +10,23 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class CloudLogicTest {
+    @Test
+    fun `bounded copies accept exact size and reject excess before writing it`() {
+        val output = ByteArrayOutputStream()
+        val bytes = ByteArray(65_536) { 42 }
+        assertEquals(bytes.size.toLong(), copyBounded(ByteArrayInputStream(bytes), output, bytes.size.toLong()))
+        assertEquals(bytes.size, output.size())
+        assertFailsWith<IOException> {
+            copyBounded(ByteArrayInputStream(bytes + 1), output, bytes.size.toLong())
+        }
+        assertEquals(bytes.size * 2, output.size())
+        val partial = ByteArrayOutputStream().apply { write(byteArrayOf(1, 2)) }
+        assertEquals(2L, copyBounded(ByteArrayInputStream(byteArrayOf(3, 4)), partial, 4L - partial.size()))
+        assertEquals(4, partial.size())
+        assertFailsWith<IOException> { copyBounded(ByteArrayInputStream(byteArrayOf(5)), partial, 0) }
+        assertEquals(4, partial.size())
+    }
+
     @Test
     fun `provider IDs accept only the fixed allowlist`() {
         assertEquals(CloudProvider.OPENAI, CloudProvider.fromId("openai"))

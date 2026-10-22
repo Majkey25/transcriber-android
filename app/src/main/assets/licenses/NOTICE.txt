@@ -5,6 +5,10 @@ This APK includes APACHE-2.0.txt and WHISPER-MIT.txt alongside this file.
 sherpa-onnx 1.13.4, k2-fsa contributors, Apache License 2.0.
 https://github.com/k2-fsa/sherpa-onnx
 
+OkHttp 5.5.1 and Okio, upstream contributors, Apache License 2.0.
+https://github.com/lysine-dev/okhttp
+https://github.com/square/okio
+
 Whisper Small model, Copyright (c) 2022 OpenAI, MIT License.
 https://github.com/openai/whisper
 

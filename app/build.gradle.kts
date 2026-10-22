@@ -6,14 +6,14 @@ plugins {
 
 android {
     namespace = "cz.majkey.prepis"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "cz.majkey.prepis"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.3.2"
+        versionCode = 7
+        versionName = "0.3.3"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
@@ -65,6 +65,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
 
     implementation("com.github.k2-fsa:sherpa-onnx:v1.13.4")
+    implementation("com.squareup.okhttp3:okhttp:5.5.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation(kotlin("test"))
