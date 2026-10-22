@@ -45,13 +45,13 @@ class QueueCapacityUiTest {
                 }
                 awaitUi {
                     instrumentation.uiAutomation.rootInActiveWindow
-                        ?.findAccessibilityNodeInfosByText(context.getString(R.string.queue_full_title))
-                        ?.isNotEmpty() == true
+                        ?.findText(context.getString(R.string.queue_full_title)) != null
                 }
                 assertTrue(model.queueFull.value)
-                val buttons = instrumentation.uiAutomation.rootInActiveWindow
-                    .findAccessibilityNodeInfosByText(context.getString(android.R.string.ok))
-                assertTrue(buttons.any { it.performAction(AccessibilityNodeInfo.ACTION_CLICK) })
+                var button = instrumentation.uiAutomation.rootInActiveWindow
+                    ?.findText(context.getString(android.R.string.ok))
+                while (button != null && !button.isClickable) button = button.parent
+                assertTrue(button?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
                 awaitUi { !model.queueFull.value }
             }
             assertTrue(manager.getWorkInfosByTag(tag).get().all { !it.state.isFinished })
@@ -61,6 +61,14 @@ class QueueCapacityUiTest {
             activity?.let { instrumentation.runOnMainSync { it.finish() } }
             manager.cancelAllWorkByTag(tag).result.get(60, TimeUnit.SECONDS)
         }
+    }
+
+    private fun AccessibilityNodeInfo.findText(text: String): AccessibilityNodeInfo? {
+        if (this.text?.toString() == text) return this
+        for (index in 0 until childCount) {
+            getChild(index)?.findText(text)?.let { return it }
+        }
+        return null
     }
 
     private fun awaitUi(condition: () -> Boolean) {
