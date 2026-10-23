@@ -8,7 +8,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import java.util.UUID
 import java.util.concurrent.TimeUnit
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -18,7 +20,7 @@ class QueueCapacityUiTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val manager = WorkManager.getInstance(context)
-        val tag = "queue-capacity-ui-fixture"
+        val tag = "queue-capacity-ui-fixture-${UUID.randomUUID()}"
         val requests = (0 until MAX_FOLDER_DOCUMENTS).map { index ->
             OneTimeWorkRequestBuilder<TranscriptionWorker>()
                 .setInitialDelay(30, TimeUnit.DAYS)
@@ -43,18 +45,23 @@ class QueueCapacityUiTest {
                     if (local) model.enqueue(recording, TranscriptionProfile.LOCAL_CZECH)
                     else model.confirmCloudTranscription(recording, cloud)
                 }
-                awaitUi {
-                    instrumentation.uiAutomation.rootInActiveWindow
+                awaitUi("Expected queue-capacity dialog for local=$local") {
+                    model.queueFull.value && instrumentation.uiAutomation.rootInActiveWindow
                         ?.findText(context.getString(R.string.queue_full_title)) != null
                 }
-                assertTrue(model.queueFull.value)
+                assertTrue("Expected full queue for local=$local", model.queueFull.value)
                 var button = instrumentation.uiAutomation.rootInActiveWindow
                     ?.findText(context.getString(android.R.string.ok))
                 while (button != null && !button.isClickable) button = button.parent
                 assertTrue(button?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
-                awaitUi { !model.queueFull.value }
+                awaitUi("Expected dismissed queue-capacity dialog for local=$local") {
+                    !model.queueFull.value && instrumentation.uiAutomation.rootInActiveWindow
+                        ?.findText(context.getString(R.string.queue_full_title)) == null
+                }
             }
-            assertTrue(manager.getWorkInfosByTag(tag).get().all { !it.state.isFinished })
+            val seeded = manager.getWorkInfosByTag(tag).get()
+            assertEquals(MAX_FOLDER_DOCUMENTS, seeded.size)
+            assertTrue(seeded.all { !it.state.isFinished })
             assertTrue(manager.getWorkInfosByTag(recording.admissionTag(cloud)).get().isEmpty())
             assertTrue(manager.getWorkInfosByTag(recording.admissionTag(TranscriptionProfile.LOCAL_CZECH)).get().isEmpty())
         } finally {
@@ -71,9 +78,9 @@ class QueueCapacityUiTest {
         return null
     }
 
-    private fun awaitUi(condition: () -> Boolean) {
+    private fun awaitUi(message: String, condition: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 15_000
         while (!condition() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50)
-        assertTrue("Expected queue-capacity UI state", condition())
+        assertTrue(message, condition())
     }
 }
