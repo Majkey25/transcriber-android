@@ -23,33 +23,47 @@ internal class AudioTranscriber(
     private val checkCancelled: () -> Unit,
 ) {
     fun transcribe(uri: Uri): String {
-        checkCancelled()
-        if (useOmnilingual(language)) return transcribeOmnilingual(uri)
-
-        val whisper = transcribeWhisper(uri)
-        checkCancelled()
-        if (language != TranscriptionLanguage.AUTO) return whisper.text
-        val detected = whisper.detectedLanguage
-            ?.let { runCatching { TranscriptionLanguage.fromId(it) }.getOrNull() }
-        return if (detected != null && useOmnilingual(detected)) {
-            transcribeOmnilingual(uri)
+        val budget = LocalAudioBudget()
+        checkActive(budget)
+        val transcript = if (useOmnilingual(language)) {
+            transcribeOmnilingual(uri, budget)
         } else {
-            whisper.text
+            val whisper = transcribeWhisper(uri, budget)
+            val detected = whisper.detectedLanguage
+                ?.let { runCatching { TranscriptionLanguage.fromId(it) }.getOrNull() }
+            if (language == TranscriptionLanguage.AUTO && detected != null && useOmnilingual(detected)) {
+                transcribeOmnilingual(uri, budget)
+            } else {
+                whisper.text
+            }
         }
+        checkActive(budget)
+        return transcript
     }
 
-    private fun transcribeWhisper(uri: Uri): WhisperTranscript {
+    private fun checkActive(budget: LocalAudioBudget) {
+        checkCancelled()
+        budget.checkTime()
+    }
+
+    private fun transcribeWhisper(uri: Uri, budget: LocalAudioBudget): WhisperTranscript {
+        checkActive(budget)
         val recognizer = createWhisperRecognizer()
         val transcript = TranscriptAccumulator()
         val detectedLanguages = LanguageVotes()
 
         try {
-            decodeAudio(uri) { samples, sampleRate ->
+            checkActive(budget)
+            decodeAudio(uri, budget) { samples, sampleRate ->
                 val stream = recognizer.createStream()
                 try {
+                    checkActive(budget)
                     stream.acceptWaveform(samples, sampleRate)
+                    checkActive(budget)
                     recognizer.decode(stream)
+                    checkActive(budget)
                     val result = recognizer.getResult(stream)
+                    checkActive(budget)
                     transcript.add(result.text.trim())
                     detectedLanguages.add(result.lang)
                 } finally {
@@ -60,19 +74,27 @@ internal class AudioTranscriber(
             recognizer.release()
         }
 
+        checkActive(budget)
         return WhisperTranscript(transcript.finish(), detectedLanguages.selected())
     }
 
-    private fun transcribeOmnilingual(uri: Uri): String {
+    private fun transcribeOmnilingual(uri: Uri, budget: LocalAudioBudget): String {
+        checkActive(budget)
         val recognizer = createOmnilingualRecognizer()
         val transcript = TranscriptAccumulator()
         try {
-            decodeAudio(uri) { samples, sampleRate ->
+            checkActive(budget)
+            decodeAudio(uri, budget) { samples, sampleRate ->
                 val stream = recognizer.createStream()
                 try {
+                    checkActive(budget)
                     stream.acceptWaveform(samples, sampleRate)
+                    checkActive(budget)
                     recognizer.decode(stream)
-                    transcript.add(formatCtcPart(recognizer.getResult(stream).text))
+                    checkActive(budget)
+                    val result = recognizer.getResult(stream)
+                    checkActive(budget)
+                    transcript.add(formatCtcPart(result.text))
                 } finally {
                     stream.release()
                 }
@@ -80,6 +102,7 @@ internal class AudioTranscriber(
         } finally {
             recognizer.release()
         }
+        checkActive(budget)
         return transcript.finish()
     }
 
@@ -113,16 +136,21 @@ internal class AudioTranscriber(
         return OfflineRecognizer(config = OfflineRecognizerConfig(modelConfig = model))
     }
 
-    internal fun decodeAudio(uri: Uri, consume: (FloatArray, Int) -> Unit) {
-        checkCancelled()
+    internal fun decodeAudio(
+        uri: Uri,
+        budget: LocalAudioBudget = LocalAudioBudget(),
+        consume: (FloatArray, Int) -> Unit,
+    ) {
+        checkActive(budget)
         val descriptor = resolver.openFileDescriptor(uri, "r")
             ?: throw IOException("The recording cannot be opened")
         descriptor.use {
+            checkActive(budget)
             val extractor = MediaExtractor()
             try {
-                checkCancelled()
+                checkActive(budget)
                 extractor.setDataSource(it.fileDescriptor)
-                checkCancelled()
+                checkActive(budget)
                 val trackIndex = (0 until extractor.trackCount).firstOrNull { index ->
                     extractor.getTrackFormat(index)
                         .getString(MediaFormat.KEY_MIME)
@@ -130,20 +158,22 @@ internal class AudioTranscriber(
                 } ?: throw IOException("The file contains no audio track")
 
                 extractor.selectTrack(trackIndex)
-                decodeTrack(extractor, extractor.getTrackFormat(trackIndex)) { samples, sampleRate ->
-                    checkCancelled()
+                decodeTrack(extractor, extractor.getTrackFormat(trackIndex), budget) { samples, sampleRate ->
+                    checkActive(budget)
                     consume(samples, sampleRate)
-                    checkCancelled()
+                    checkActive(budget)
                 }
             } finally {
                 extractor.release()
             }
         }
+        checkActive(budget)
     }
 
     private fun decodeTrack(
         extractor: MediaExtractor,
         inputFormat: MediaFormat,
+        budget: LocalAudioBudget,
         consume: (FloatArray, Int) -> Unit,
     ) {
         val mime = inputFormat.getString(MediaFormat.KEY_MIME)
@@ -151,11 +181,15 @@ internal class AudioTranscriber(
         var sampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
         var channelCount = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
         var pcmEncoding = AudioFormat.ENCODING_PCM_16BIT
+        budget.pcmFrameBytes(sampleRate, channelCount, pcmEncoding)
         var chunker = PcmChunker(channelCount, pcmChunkSamples(sampleRate))
+        checkActive(budget)
         val codec = MediaCodec.createDecoderByType(mime)
 
         try {
+            checkActive(budget)
             codec.configure(inputFormat, null, null, 0)
+            checkActive(budget)
             codec.start()
 
             val bufferInfo = MediaCodec.BufferInfo()
@@ -164,7 +198,7 @@ internal class AudioTranscriber(
             var idleCycles = 0
 
             while (!outputEnded) {
-                checkCancelled()
+                checkActive(budget)
                 var progressed = false
                 if (!inputEnded) {
                     val inputIndex = codec.dequeueInputBuffer(CODEC_TIMEOUT_US)
@@ -181,6 +215,7 @@ internal class AudioTranscriber(
                             )
                             inputEnded = true
                         } else {
+                            budget.chargeCompressedBytes(size)
                             codec.queueInputBuffer(inputIndex, 0, size, extractor.sampleTime, 0)
                             extractor.advance()
                         }
@@ -198,12 +233,14 @@ internal class AudioTranscriber(
                         } else {
                             AudioFormat.ENCODING_PCM_16BIT
                         }
+                        budget.pcmFrameBytes(sampleRate, channelCount, pcmEncoding)
                         chunker = PcmChunker(channelCount, pcmChunkSamples(sampleRate))
                         progressed = true
                     }
 
                     MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
                     else -> if (outputIndex >= 0) {
+                        budget.chargeDecodedBytes(bufferInfo.size, sampleRate, channelCount, pcmEncoding)
                         if (bufferInfo.size > 0) {
                             val output = checkNotNull(codec.getOutputBuffer(outputIndex)).apply {
                                 position(bufferInfo.offset)
@@ -301,7 +338,7 @@ internal class PcmChunker(
     private val chunkSamples: Int,
 ) {
     init {
-        require(channelCount in 1..32) { "Unsupported audio channel count" }
+        require(channelCount in 1..MAX_CHANNEL_COUNT) { "Unsupported audio channel count" }
         require(chunkSamples in 1..MAX_CHUNK_SAMPLES) { "Unsupported audio chunk size" }
     }
 
@@ -345,5 +382,6 @@ internal fun pcmChunkSamples(sampleRate: Int): Int {
 }
 
 private const val CHUNK_SECONDS = 25
-private const val MAX_SAMPLE_RATE = 192_000
+internal const val MAX_SAMPLE_RATE = 192_000
+internal const val MAX_CHANNEL_COUNT = 32
 private const val MAX_CHUNK_SAMPLES = MAX_SAMPLE_RATE * CHUNK_SECONDS

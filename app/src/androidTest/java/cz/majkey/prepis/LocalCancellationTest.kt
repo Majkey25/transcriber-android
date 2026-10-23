@@ -49,6 +49,39 @@ class LocalCancellationTest {
         }
     }
 
+    @Test
+    fun durationLimitRejectsBeforeExcessConsumptionAndReleasesTheCodec() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val audio = File.createTempFile("audio-budget-", ".wav", context.cacheDir)
+        try {
+            writeAudio(audio)
+            val models = LocalModels(context.cacheDir, context.cacheDir)
+            val transcriber = AudioTranscriber(context.contentResolver, models, checkCancelled = {})
+            var consumed = 0
+            try {
+                transcriber.decodeAudio(
+                    Uri.fromFile(audio),
+                    LocalAudioBudget(maxDecodedDurationUs = 1_000_000),
+                ) { _, _ -> consumed++ }
+                fail("Decoding exceeded its duration budget")
+            } catch (_: LocalAudioLimitException) {
+                assertEquals(0, consumed)
+            }
+
+            var completeChunks = 0
+            var decodedSamples = 0
+            transcriber.decodeAudio(Uri.fromFile(audio)) { samples, rate ->
+                assertEquals(SAMPLE_RATE, rate)
+                completeChunks++
+                decodedSamples += samples.size
+            }
+            assertEquals(2, completeChunks)
+            assertEquals(SAMPLE_RATE * SECONDS, decodedSamples)
+        } finally {
+            audio.delete()
+        }
+    }
+
     private fun writeAudio(file: File) {
         val dataBytes = SAMPLE_RATE * SECONDS * 2
         val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.5 - 2026-10-23
+
+### Fixed
+
+- Bound each local transcription to 24 hours of decoded audio, 4 GiB of decoder input, and six hours of elapsed time across both recognition passes.
+- Check limits before consuming audio and after native calls return, without saving partial transcripts when a limit is exceeded.
+
 ## 0.3.4 - 2026-10-22
 
 ### Fixed
