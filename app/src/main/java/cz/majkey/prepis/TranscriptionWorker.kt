@@ -30,8 +30,6 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 class TranscriptionWorker(
@@ -54,22 +52,16 @@ class TranscriptionWorker(
         return try {
             withContext(Dispatchers.IO) { TranscriptStore(applicationContext).checkCapacity(key, profile) }
             updateState(PHASE_MODEL, applicationContext.getString(R.string.notification_model))
-            val modelDirectories = withContext(Dispatchers.IO) { models.ensureInstalled() }
+            withContext(Dispatchers.IO) { models.ensureInstalled() }
             modelReady = true
 
             updateState(
                 PHASE_TRANSCRIBING,
                 applicationContext.getString(R.string.notification_transcribing, name),
             )
-            val transcript = withContext(Dispatchers.IO) {
-                val operation = currentCoroutineContext()
-                AudioTranscriber(
-                    applicationContext.contentResolver,
-                    modelDirectories,
-                    profile.language,
-                    checkCancelled = operation::ensureActive,
-                ).transcribe(uri)
-            }
+            val transcript = transcribeLocal(
+                applicationContext, uri, inputData.getLong(KEY_SIZE, -1), profile.language,
+            )
             withContext(Dispatchers.IO) {
                 TranscriptStore(applicationContext).write(key, transcript, profile)
             }
@@ -129,6 +121,7 @@ class TranscriptionWorker(
         const val PHASE_TRANSCRIBING = "transcribing"
 
         private const val KEY_URI = "uri"
+        private const val KEY_SIZE = "size"
         private const val KEY_RECORDING = "recording"
         private const val KEY_NAME = "name"
         private const val KEY_MODEL = "model"
@@ -140,6 +133,7 @@ class TranscriptionWorker(
 
         fun input(recording: Recording, profile: TranscriptionProfile) = workDataOf(
             KEY_URI to recording.uri.toString(),
+            KEY_SIZE to recording.size,
             KEY_RECORDING to recording.key,
             KEY_NAME to recording.name,
             KEY_MODEL to profile.model.id,

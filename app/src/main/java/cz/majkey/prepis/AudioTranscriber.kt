@@ -22,8 +22,7 @@ internal class AudioTranscriber(
     private val language: TranscriptionLanguage = TranscriptionLanguage.CZECH,
     private val checkCancelled: () -> Unit,
 ) {
-    fun transcribe(uri: Uri): String {
-        val budget = LocalAudioBudget()
+    fun transcribe(uri: Uri, budget: LocalAudioBudget = LocalAudioBudget()): String {
         checkActive(budget)
         val transcript = if (useOmnilingual(language)) {
             transcribeOmnilingual(uri, budget)

@@ -6,8 +6,8 @@ import java.io.IOException
 
 internal class LocalAudioBudget(
     maxDecodedDurationUs: Long = 24L * 60 * 60 * 1_000_000,
-    maxCompressedBytes: Long = 4L * 1024 * 1024 * 1024,
-    private val maxElapsedNanos: Long = 6L * 60 * 60 * 1_000_000_000,
+    maxCompressedBytes: Long = MAX_LOCAL_INPUT_BYTES,
+    private val maxElapsedNanos: Long = LOCAL_JOB_TIMEOUT_MS * 1_000_000,
     private val nanoTime: () -> Long = SystemClock::elapsedRealtimeNanos,
 ) {
     init {
