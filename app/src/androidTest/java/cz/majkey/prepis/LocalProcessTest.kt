@@ -224,12 +224,16 @@ class LocalProcessTest {
         throw AssertionError("Untrusted audio should have failed")
     }
 
-    private fun assertStopped() {
+    private suspend fun assertStopped() {
         assertEquals(mainPid, Process.myPid())
         val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        assertFalse(manager.runningAppProcesses.orEmpty().any {
-            it.processName == "${context.packageName}:localTranscription" && it.pid != mainPid
-        })
+        // Process-list bookkeeping can lag the Binder death already required by the client.
+        withTimeout(5000) {
+            while (manager.runningAppProcesses.orEmpty().any {
+                    it.processName == "${context.packageName}:localTranscription" && it.pid != mainPid
+                }
+            ) delay(20)
+        }
         assertFalse(LocalTranscriptionProtocol.directory(context).resolve(LocalTranscriptionProtocol.AUDIO).exists())
         assertFalse(LocalTranscriptionProtocol.directory(context).resolve(LocalTranscriptionProtocol.RESULT).exists())
     }
