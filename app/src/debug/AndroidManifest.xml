@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <service
+            android:name=".CodecTestService"
+            android:exported="false"
+            android:process=":localTranscription" />
+        <provider
+            android:name=".LocalAudioTestProvider"
+            android:authorities="${applicationId}.audio-test"
+            android:exported="false" />
+        <service
+            android:name=".PendingBindTestService"
+            android:exported="false"
+            android:process=":localTranscription" />
+        <service
+            android:name=".LocalOwnerTestService"
+            android:exported="false"
+            android:process=":localTranscriptionOwner" />
+    </application>
+</manifest>

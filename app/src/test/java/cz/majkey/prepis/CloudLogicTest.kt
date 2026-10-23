@@ -11,6 +11,17 @@ import kotlin.test.assertTrue
 
 class CloudLogicTest {
     @Test
+    fun `bounded copies read only one excess proof byte`() {
+        val input = ByteArrayInputStream(ByteArray(65_536))
+        val output = ByteArrayOutputStream()
+        assertFailsWith<IOException> { copyBounded(input, output, 1024) }
+        assertEquals(1025, 65_536 - input.available())
+        assertTrue(output.size() <= 1024)
+        assertFailsWith<IOException> { copyBounded(input, output, -1) }
+        assertEquals(1025, 65_536 - input.available())
+    }
+
+    @Test
     fun `bounded copies accept exact size and reject excess before writing it`() {
         val output = ByteArrayOutputStream()
         val bytes = ByteArray(65_536) { 42 }

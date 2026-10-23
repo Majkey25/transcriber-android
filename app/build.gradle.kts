@@ -12,8 +12,8 @@ android {
         applicationId = "cz.majkey.prepis"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.3.5"
+        versionCode = 10
+        versionName = "0.3.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {

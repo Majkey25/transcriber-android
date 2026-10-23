@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.6 - 2026-10-23
+
+### Fixed
+
+- Isolate local audio acquisition and recognition in a private process with independent deadline, cancellation, and client-death termination.
+- Copy provider audio once with declared and actual byte limits, preserve asset offsets, and use the same private snapshot for both recognition passes.
+- Transfer bounded results through private staging files and preserve final transcript storage in the worker process.
+
 ## 0.3.5 - 2026-10-23
 
 ### Fixed

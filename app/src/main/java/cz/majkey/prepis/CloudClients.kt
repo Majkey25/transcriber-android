@@ -371,15 +371,17 @@ internal fun copyBounded(
     maxBytes: Long,
     checkDeadline: () -> Unit = {},
 ): Long {
+    if (maxBytes < 0) throw IOException("Invalid input byte limit")
     var total = 0L
     val buffer = ByteArray(64 * 1024)
     while (true) {
         checkDeadline()
-        val count = input.read(buffer)
+        val remaining = maxBytes - total
+        val count = input.read(buffer, 0, if (remaining < buffer.size) remaining.toInt() + 1 else buffer.size)
         checkDeadline()
         if (count < 0) return total
+        if (count > remaining) throw IOException("The input exceeds the allowed size")
         total += count
-        if (total > maxBytes) throw IOException("The input exceeds the allowed size")
         output.write(buffer, 0, count)
     }
 }
