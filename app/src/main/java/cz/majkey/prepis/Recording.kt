@@ -1,6 +1,7 @@
 package cz.majkey.prepis
 
 import android.content.Context
+import android.database.sqlite.SQLiteException
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.core.content.edit
@@ -13,6 +14,8 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.util.concurrent.ExecutionException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -45,7 +48,18 @@ internal fun Recording.admissionTag(profile: TranscriptionProfile): String =
 private val transcriptionAdmissionMutex = Mutex()
 
 internal suspend fun <T> withTranscriptionAdmission(block: () -> T): T =
-    transcriptionAdmissionMutex.withLock { withContext(Dispatchers.IO) { block() } }
+    transcriptionAdmissionMutex.withLock {
+        withContext(Dispatchers.IO) {
+            try {
+                block()
+            } catch (exception: ExecutionException) {
+                val cause = exception.cause
+                if (cause is CancellationException) throw cause
+                if (cause is SQLiteException || cause is IOException) throw TranscriptionAdmissionStorageException(exception)
+                throw exception
+            }
+        }
+    }
 
 internal fun WorkManager.checkTranscriptionCapacity() {
     val query = WorkQuery.Builder.fromTags(listOf(

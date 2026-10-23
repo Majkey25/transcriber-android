@@ -62,7 +62,7 @@ class TranscriptionRetryTest {
             if (profile.model.isLocal) {
                 TranscriptionQueue(context).enqueue(recording, profile)
             } else {
-                CloudTranscriptionQueue(context).enqueue(recording, profile)
+                CloudTranscriptionQueue(context).enqueue(recording, profile, userConfirmed = true)
             }
             assertContentEquals(bytes, original.readBytes())
             assertEquals(String(bytes, Charsets.UTF_8), store.read(recording.key, profile))

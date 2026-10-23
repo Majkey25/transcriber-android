@@ -192,16 +192,15 @@ class CloudTranscriptionQueue(context: Context) {
     private val appContext = context.applicationContext
     private val manager = WorkManager.getInstance(appContext)
     private val transcripts = TranscriptStore(appContext)
+    private val admissions = TranscriptionAdmissions(appContext)
 
     suspend fun enqueueMissing(
         recordings: List<Recording>,
         profile: TranscriptionProfile,
-        retryErrors: Boolean = false,
     ) {
+        withTranscriptionAdmission { admissions.baseline(recordings) }
         for (recording in recordings) {
-            if (!transcripts.exists(recording.key, profile)) {
-                enqueue(recording, profile, automatic = !retryErrors)
-            }
+            enqueue(recording, profile, automatic = true)
         }
     }
 
@@ -212,22 +211,33 @@ class CloudTranscriptionQueue(context: Context) {
         userConfirmed: Boolean = false,
     ) = withTranscriptionAdmission {
         require(profile.model.provider != null) { "Cloud queue requires a cloud model" }
-        if (automatic && transcripts.exists(recording.key, profile)) return@withTranscriptionAdmission
+        require(automatic || userConfirmed) { "Manual cloud transcription requires confirmation" }
+        if (automatic && transcripts.exists(recording.key, profile)) {
+            admissions.record(recording, profile)
+            return@withTranscriptionAdmission
+        }
+        if (automatic && admissions.contains(recording, profile)) return@withTranscriptionAdmission
         val uniqueName = CloudTranscriptionWorker.recordingTag(recording.key, profile)
         val sourceTag = recording.admissionTag(profile)
         if (manager.getWorkInfosByTag(sourceTag).get().any { it.state.isActive() }) {
+            admissions.record(recording, profile)
             return@withTranscriptionAdmission
         }
         val existing = manager.getWorkInfosByTag(uniqueName).get()
-        if (existing.any { it.state.isActive() }) return@withTranscriptionAdmission
+        if (existing.any { it.state.isActive() }) {
+            admissions.record(recording, profile)
+            return@withTranscriptionAdmission
+        }
         if (automatic && existing.any {
                 it.state == WorkInfo.State.SUCCEEDED &&
                     it.outputData.getString(CloudTranscriptionWorker.KEY_ERROR) != null
             }
         ) {
+            admissions.record(recording, profile)
             return@withTranscriptionAdmission
         }
         manager.checkTranscriptionCapacity()
+        admissions.record(recording, profile)
         val request = OneTimeWorkRequestBuilder<CloudTranscriptionWorker>()
             .setInputData(CloudTranscriptionWorker.input(recording, profile, userConfirmed))
             .setConstraints(

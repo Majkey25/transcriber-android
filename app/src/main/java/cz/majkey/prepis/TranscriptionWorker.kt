@@ -146,15 +146,15 @@ class TranscriptionQueue(context: Context) {
     private val appContext = context.applicationContext
     private val manager = WorkManager.getInstance(appContext)
     private val transcripts = TranscriptStore(appContext)
+    private val admissions = TranscriptionAdmissions(appContext)
 
     suspend fun enqueueMissing(
         recordings: List<Recording>,
         profile: TranscriptionProfile,
     ) {
+        withTranscriptionAdmission { admissions.baseline(recordings) }
         for (recording in recordings) {
-            if (!transcripts.exists(recording.key, profile)) {
-                enqueue(recording, profile, automatic = true)
-            }
+            enqueue(recording, profile, automatic = true)
         }
     }
 
@@ -164,24 +164,34 @@ class TranscriptionQueue(context: Context) {
         automatic: Boolean = false,
     ) = withTranscriptionAdmission {
         require(profile.model.isLocal) { "Local queue requires a local model" }
-        if (automatic && transcripts.exists(recording.key, profile)) return@withTranscriptionAdmission
+        if (automatic && transcripts.exists(recording.key, profile)) {
+            admissions.record(recording, profile)
+            return@withTranscriptionAdmission
+        }
+        if (automatic && admissions.contains(recording, profile)) return@withTranscriptionAdmission
         val tag = TranscriptionWorker.recordingTag(recording.key, profile)
         val sourceTag = recording.admissionTag(profile)
         if (manager.getWorkInfosByTag(sourceTag).get().any { it.state.isActive() }) {
+            admissions.record(recording, profile)
             return@withTranscriptionAdmission
         }
         val existing = manager.getWorkInfosByTag(tag).get()
         val active = existing.any { it.state.isActive() }
-        if (active) return@withTranscriptionAdmission
+        if (active) {
+            admissions.record(recording, profile)
+            return@withTranscriptionAdmission
+        }
         if (automatic && existing.any {
                 it.state == WorkInfo.State.SUCCEEDED &&
                     it.outputData.getString(TranscriptionWorker.KEY_ERROR) != null
             }
         ) {
+            admissions.record(recording, profile)
             return@withTranscriptionAdmission
         }
 
         manager.checkTranscriptionCapacity()
+        admissions.record(recording, profile)
         val request = OneTimeWorkRequestBuilder<TranscriptionWorker>()
             .setInputData(TranscriptionWorker.input(recording, profile))
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)

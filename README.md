@@ -87,10 +87,27 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 - Folders are limited to 10,000 direct entries, recording names to 512 characters,
   and document URIs to 2,048 characters. Oversized inventories are rejected before queueing.
 - Local PCM input is limited to 192 kHz and 32 channels before allocating audio chunks.
-- Local decoding checks cancellation between codec operations and recognition chunks.
-  A running native recognition or document-provider call must return before cancellation takes effect.
+- Local audio acquisition and recognition run in a private process that terminates on
+  deadline, cancellation or client death, including blocked provider and native calls.
+  A bounded private snapshot is shared across recognition passes; staging is reused only
+  after confirmed Binder death. This process shares the app UID and is not an RCE sandbox.
 - Only one queued or running job is admitted for each recording URI and model/language
-  profile. Changes to a busy recording are picked up by the next folder refresh or manual retry.
+  profile. Automatic admission also saves a permanent receipt for that exact URI/profile
+  before enqueueing. Metadata changes, completed or failed jobs, and WorkManager pruning
+  do not permit another automatic attempt. Tap an unqueued recording to retry manually;
+  manual cloud uploads require confirmation. Transcript files remain specific to the
+  original URI, size, modification time, model and language; changed metadata never reuses old text.
+- Admission history holds at most 10,000 URI/profile entries, without eviction or automatic
+  reset. Existing identities can be retried at capacity; new ones are rejected. Read/write
+  failures stop admission with a separate error. Replacing an API key only triggers a normal
+  automatic folder refresh, not a retry of previously admitted recordings.
+- On upgrade, a saved folder or existing transcript files require a conservative first-scan
+  baseline: every visible recording URI is marked as known for all profiles. Existing jobs
+  and transcripts stay intact, while missing transcripts need manual action. Recordings
+  first appearing after that inventory remain eligible for automatic admission. Old hashed
+  transcript filenames cannot recover source URIs; absent recordings and a provider that
+  presents the same content under a new URI cannot be linked to that baseline. Clearing app
+  data or reinstalling also removes this history; this is not provider identity authentication.
 - The local and cloud queues share a limit of 10,000 waiting or running jobs, including
   jobs queued by older versions. A full queue shows a message; retry or reopen the app
   after jobs finish to add the remaining recordings. This is not a lifetime processing or cost limit.

@@ -114,6 +114,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val folders = FolderStore(app)
     private val scanner = RecordingScanner(app)
     private val transcripts = TranscriptStore(app)
+    private val admissions = TranscriptionAdmissions(app)
     private val queue = TranscriptionQueue(app)
     private val cloudQueue = CloudTranscriptionQueue(app)
     private val secrets = SecretStore(app)
@@ -143,6 +144,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _queueFull = MutableStateFlow(false)
     val queueFull: StateFlow<Boolean> = _queueFull.asStateFlow()
+
+    private val _admissionError = MutableStateFlow<String?>(null)
+    val admissionError: StateFlow<String?> = _admissionError.asStateFlow()
+
+    private val _cloudConfirmation = MutableStateFlow<CloudConfirmation?>(null)
+    val cloudConfirmation: StateFlow<CloudConfirmation?> = _cloudConfirmation.asStateFlow()
 
     val localWorkInfos: StateFlow<List<WorkInfo>> = workManager
         .getWorkInfosByTagFlow(TranscriptionWorker.GLOBAL_TAG)
@@ -180,6 +187,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
+                // Initialize before saving the first folder so a new installation needs no legacy baseline.
+                withTranscriptionAdmission { admissions.initialize() }
                 val previous = folders.load()
                 if (previous != uri) {
                     queue.cancelAll()
@@ -199,6 +208,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 refresh()
             } catch (exception: CancellationException) {
                 throw exception
+            } catch (_: TranscriptionAdmissionStorageException) {
+                _admissionError.value = app.getString(R.string.admission_storage_failed)
             } catch (_: Exception) {
                 _folderError.value = app.getString(R.string.folder_change_failed)
             }
@@ -224,7 +235,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val files = withContext(Dispatchers.IO) { scanner.scan(uri) }
                 recordings.value = files
-                reportQueueCapacity { enqueueMissing(files) }
+                reportQueueCapacity {
+                    withTranscriptionAdmission { admissions.baseline(files) }
+                    enqueueMissing(files)
+                }
             } catch (exception: CancellationException) {
                 throw exception
             } catch (_: RecordingScanLimitException) {
@@ -256,7 +270,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (profile.model.isLocal) {
                     queue.enqueue(recording, profile)
                 } else if (profile.model.provider in _configuredProviders.value) {
-                    cloudQueue.enqueue(recording, profile)
+                    _cloudConfirmation.value = CloudConfirmation(recording, profile)
                 }
             }
         }
@@ -267,11 +281,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _settingsMessage.value = try {
                 secrets.put(provider, key)
                 _configuredProviders.value = secrets.configuredProviders()
-                _profile.value.takeIf { it.model.provider == provider }?.let { profile ->
-                    reportQueueCapacity {
-                        cloudQueue.enqueueMissing(recordings.value, profile, retryErrors = true)
-                    }
-                }
+                if (_profile.value.model.provider == provider) withContext(Dispatchers.Main) { refresh() }
                 app.getString(R.string.api_key_saved, app.getString(provider.nameResource()))
             } catch (_: IllegalArgumentException) {
                 app.getString(R.string.api_key_invalid)
@@ -309,6 +319,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun confirmCloudTranscription(recording: Recording, profile: TranscriptionProfile) {
+        _cloudConfirmation.value = null
         changeCloudSettings {
             reportQueueCapacity {
                 if (profile.model.isLocal) {
@@ -325,7 +336,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             action()
         } catch (_: TranscriptionQueueFullException) {
             _queueFull.value = true
+        } catch (_: TranscriptionAdmissionLimitException) {
+            _admissionError.value = app.getString(R.string.admission_limit_reached, MAX_FOLDER_DOCUMENTS)
+        } catch (_: TranscriptionAdmissionStorageException) {
+            _admissionError.value = app.getString(R.string.admission_storage_failed)
         }
+    }
+
+    fun dismissAdmissionError() {
+        _admissionError.value = null
+    }
+
+    fun dismissCloudConfirmation() {
+        _cloudConfirmation.value = null
     }
 
     fun dismissQueueFull() {
@@ -404,7 +427,7 @@ internal fun Recording.toRow(
             error != null -> RecordingStatus.ERROR
             hasProfileTranscript -> RecordingStatus.DONE
             provider != null && provider !in configured -> RecordingStatus.SETUP
-            else -> RecordingStatus.WAITING
+            else -> RecordingStatus.NOT_QUEUED
         },
         hasSavedTranscript,
     )
@@ -416,8 +439,11 @@ data class RecordingRow(
     val hasTranscript: Boolean = false,
 )
 
+data class CloudConfirmation(val recording: Recording, val profile: TranscriptionProfile)
+
 enum class RecordingStatus {
     WAITING,
+    NOT_QUEUED,
     MODEL,
     TRANSCRIBING,
     DONE,
@@ -438,6 +464,8 @@ private fun TranscriberApp(model: MainViewModel) {
     val cloudWorkInfos by model.cloudWorkInfos.collectAsState()
     val settingsMessage by model.settingsMessage.collectAsState()
     val queueFull by model.queueFull.collectAsState()
+    val admissionError by model.admissionError.collectAsState()
+    val cloudConfirmation by model.cloudConfirmation.collectAsState()
     var selectedKey by rememberSaveable { mutableStateOf<String?>(null) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     val selected = rows.firstOrNull { it.recording.key == selectedKey }
@@ -509,6 +537,34 @@ private fun TranscriberApp(model: MainViewModel) {
                 TextButton(onClick = model::dismissQueueFull) {
                     Text(stringResource(android.R.string.ok))
                 }
+            },
+        )
+    }
+    admissionError?.let { message ->
+        AlertDialog(
+            onDismissRequest = model::dismissAdmissionError,
+            title = { Text(stringResource(R.string.admission_error_title)) },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = model::dismissAdmissionError) { Text(stringResource(android.R.string.ok)) }
+            },
+        )
+    }
+    cloudConfirmation?.let { confirmation ->
+        AlertDialog(
+            onDismissRequest = model::dismissCloudConfirmation,
+            title = { Text(stringResource(R.string.cloud_confirm_title)) },
+            text = {
+                Text(stringResource(R.string.cloud_confirm_body, confirmation.recording.name,
+                    stringResource(confirmation.profile.model.nameResource())))
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    model.confirmCloudTranscription(confirmation.recording, confirmation.profile)
+                }) { Text(stringResource(R.string.cloud_confirm_action)) }
+            },
+            dismissButton = {
+                TextButton(onClick = model::dismissCloudConfirmation) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -631,6 +687,7 @@ private fun RecordingItem(row: RecordingRow, onRecording: (RecordingRow) -> Unit
                 RecordingStatus.ERROR_WITH_TRANSCRIPT,
                 -> Text("!", style = MaterialTheme.typography.titleLarge)
                 RecordingStatus.WAITING -> Text("…", style = MaterialTheme.typography.titleLarge)
+                RecordingStatus.NOT_QUEUED -> Text("▷", style = MaterialTheme.typography.titleLarge)
                 RecordingStatus.SETUP -> Text("⚙", style = MaterialTheme.typography.titleLarge)
             }
         },
@@ -961,6 +1018,7 @@ private fun CenteredMessage(
 private fun statusText(status: RecordingStatus): String = stringResource(
     when (status) {
         RecordingStatus.WAITING -> R.string.status_waiting
+        RecordingStatus.NOT_QUEUED -> R.string.status_not_queued
         RecordingStatus.MODEL -> R.string.status_model
         RecordingStatus.TRANSCRIBING -> R.string.status_transcribing
         RecordingStatus.DONE -> R.string.status_done
