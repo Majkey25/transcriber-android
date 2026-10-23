@@ -141,6 +141,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _settingsMessage = MutableStateFlow<String?>(null)
     val settingsMessage: StateFlow<String?> = _settingsMessage.asStateFlow()
 
+    private val _queueFull = MutableStateFlow(false)
+    val queueFull: StateFlow<Boolean> = _queueFull.asStateFlow()
+
     val localWorkInfos: StateFlow<List<WorkInfo>> = workManager
         .getWorkInfosByTagFlow(TranscriptionWorker.GLOBAL_TAG)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -221,7 +224,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val files = withContext(Dispatchers.IO) { scanner.scan(uri) }
                 recordings.value = files
-                enqueueMissing(files)
+                reportQueueCapacity { enqueueMissing(files) }
             } catch (exception: CancellationException) {
                 throw exception
             } catch (_: RecordingScanLimitException) {
@@ -249,10 +252,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         profile: TranscriptionProfile,
     ) {
         viewModelScope.launch {
-            if (profile.model.isLocal) {
-                queue.enqueue(recording, profile)
-            } else if (profile.model.provider in _configuredProviders.value) {
-                cloudQueue.enqueue(recording, profile)
+            reportQueueCapacity {
+                if (profile.model.isLocal) {
+                    queue.enqueue(recording, profile)
+                } else if (profile.model.provider in _configuredProviders.value) {
+                    cloudQueue.enqueue(recording, profile)
+                }
             }
         }
     }
@@ -263,7 +268,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 secrets.put(provider, key)
                 _configuredProviders.value = secrets.configuredProviders()
                 _profile.value.takeIf { it.model.provider == provider }?.let { profile ->
-                    cloudQueue.enqueueMissing(recordings.value, profile, retryErrors = true)
+                    reportQueueCapacity {
+                        cloudQueue.enqueueMissing(recordings.value, profile, retryErrors = true)
+                    }
                 }
                 app.getString(R.string.api_key_saved, app.getString(provider.nameResource()))
             } catch (_: IllegalArgumentException) {
@@ -303,12 +310,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun confirmCloudTranscription(recording: Recording, profile: TranscriptionProfile) {
         changeCloudSettings {
-            if (profile.model.isLocal) {
-                queue.enqueue(recording, profile)
-            } else {
-                cloudQueue.enqueue(recording, profile, userConfirmed = true)
+            reportQueueCapacity {
+                if (profile.model.isLocal) {
+                    queue.enqueue(recording, profile)
+                } else {
+                    cloudQueue.enqueue(recording, profile, userConfirmed = true)
+                }
             }
         }
+    }
+
+    private suspend fun reportQueueCapacity(action: suspend () -> Unit) {
+        try {
+            action()
+        } catch (_: TranscriptionQueueFullException) {
+            _queueFull.value = true
+        }
+    }
+
+    fun dismissQueueFull() {
+        _queueFull.value = false
     }
 
     private fun changeCloudSettings(action: suspend () -> Unit) = viewModelScope.launch {
@@ -416,6 +437,7 @@ private fun TranscriberApp(model: MainViewModel) {
     val localWorkInfos by model.localWorkInfos.collectAsState()
     val cloudWorkInfos by model.cloudWorkInfos.collectAsState()
     val settingsMessage by model.settingsMessage.collectAsState()
+    val queueFull by model.queueFull.collectAsState()
     var selectedKey by rememberSaveable { mutableStateOf<String?>(null) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     val selected = rows.firstOrNull { it.recording.key == selectedKey }
@@ -474,6 +496,18 @@ private fun TranscriberApp(model: MainViewModel) {
                     settingsOpen = true
                 } else {
                     model.enqueue(row.recording)
+                }
+            },
+        )
+    }
+    if (queueFull) {
+        AlertDialog(
+            onDismissRequest = model::dismissQueueFull,
+            title = { Text(stringResource(R.string.queue_full_title)) },
+            text = { Text(stringResource(R.string.queue_full_message, MAX_FOLDER_DOCUMENTS)) },
+            confirmButton = {
+                TextButton(onClick = model::dismissQueueFull) {
+                    Text(stringResource(android.R.string.ok))
                 }
             },
         )

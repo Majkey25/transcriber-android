@@ -91,6 +91,9 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
   A running native recognition or document-provider call must return before cancellation takes effect.
 - Only one queued or running job is admitted for each recording URI and model/language
   profile. Changes to a busy recording are picked up by the next folder refresh or manual retry.
+- The local and cloud queues share a limit of 10,000 waiting or running jobs, including
+  jobs queued by older versions. A full queue shows a message; retry or reopen the app
+  after jobs finish to add the remaining recordings. This is not a lifetime processing or cost limit.
 - New transcripts are limited to 1 MiB of UTF-8 text each, with at most 10,000 files
   and 256 MiB of retained transcript text. Local recognition stops with an explicit error
   before accumulated text exceeds its limit; audio duration itself is not capped.

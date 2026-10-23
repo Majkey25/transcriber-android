@@ -4,6 +4,9 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.core.content.edit
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.work.WorkQuery
 import java.io.File
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
@@ -43,6 +46,17 @@ private val transcriptionAdmissionMutex = Mutex()
 
 internal suspend fun <T> withTranscriptionAdmission(block: () -> T): T =
     transcriptionAdmissionMutex.withLock { withContext(Dispatchers.IO) { block() } }
+
+internal fun WorkManager.checkTranscriptionCapacity() {
+    val query = WorkQuery.Builder.fromTags(listOf(
+        TranscriptionWorker.GLOBAL_TAG, CloudTranscriptionWorker.GLOBAL_TAG,
+    )).addStates(listOf(WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED)).build()
+    if (getWorkInfos(query).get().map { it.id }.toSet().size >= MAX_FOLDER_DOCUMENTS) {
+        throw TranscriptionQueueFullException()
+    }
+}
+
+internal class TranscriptionQueueFullException : IOException("The transcription queue is full")
 
 internal const val MAX_TRANSCRIPT_BYTES = 1024 * 1024
 internal const val MAX_TRANSCRIPT_FILES = 10_000
