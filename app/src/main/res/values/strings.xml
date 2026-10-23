@@ -18,9 +18,13 @@
     <string name="folder_change_failed">The folder could not be changed.</string>
     <string name="queue_full_title">Transcription queue is full</string>
     <string name="queue_full_message">At most %1$d local and cloud transcriptions can be waiting or running together. Existing jobs and transcripts were kept. Wait for jobs to finish, then retry or reopen the app to add remaining recordings.</string>
+    <string name="admission_error_title">Transcription was not added</string>
+    <string name="admission_storage_failed">The permanent transcription history or queue could not be read or saved. Check the recording status and retry manually; an automatic retry may be blocked. Free storage if needed. Existing jobs and transcripts were kept.</string>
+    <string name="admission_limit_reached">The permanent history has reached %1$d recording/model/language entries. New entries cannot be added. You can still manually retry previously recorded entries; waiting for jobs to finish will not clear this limit.</string>
     <string name="empty_folder">No M4A recordings were found in this folder.</string>
     <string name="try_again">Try again</string>
     <string name="status_waiting">Waiting for transcription</string>
+    <string name="status_not_queued">Not queued — tap to transcribe</string>
     <string name="status_model">Downloading the local model…</string>
     <string name="status_transcribing">Transcribing…</string>
     <string name="status_done">Transcribed</string>
@@ -43,6 +47,9 @@
     <string name="cloud_consent_body">%1$s will receive recordings, filenames, language and model settings from your selected folder to create transcripts. Existing recordings without a transcript and new recordings will upload automatically, including in the background. Provider charges, retention and data-use terms apply to your API account. Only upload audio you have permission to share. Choose Local Smart in Settings or remove an API key to stop queued cloud jobs and withdraw upload permission. Already sent audio must be managed with the provider.</string>
     <string name="cloud_consent_accept">Allow automatic uploads</string>
     <string name="cloud_upload_notice">Choose a configured provider to upload this recording, its filename and language/model settings for transcription. Provider retention and data-use terms apply. Only upload audio you have permission to share. This may use quota or incur provider charges.</string>
+    <string name="cloud_confirm_title">Upload this recording?</string>
+    <string name="cloud_confirm_body">Upload %1$s with %2$s? The provider receives this recording, its filename and language/model settings. This may repeat an earlier upload and incur charges. Provider retention and data-use terms apply.</string>
+    <string name="cloud_confirm_action">Upload and transcribe</string>
     <string name="cloud_in_progress">Transcribing with %1$s…</string>
     <string name="cancel">Cancel</string>
     <string name="source">Source</string>

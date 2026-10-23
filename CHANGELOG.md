@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7 - 2026-10-23
+
+### Fixed
+
+- Persist bounded automatic-admission history before enqueueing so metadata changes and pruned jobs cannot trigger repeated processing of the same recording URI/profile.
+- Baseline the first legacy folder inventory conservatively, preserve existing transcripts, and require explicit confirmation for manual cloud uploads.
+- Show actionable unqueued states and distinct history-capacity or storage errors without silently resetting admission protection.
+
 ## 0.3.6 - 2026-10-23
 
 ### Fixed
