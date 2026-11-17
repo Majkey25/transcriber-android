@@ -68,7 +68,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.5.1")
 
     testImplementation("junit:junit:4.13.2")
-    testImplementation(kotlin("test"))
+    testImplementation(kotlin("test-junit"))
     testImplementation("org.json:json:20260814")
     testImplementation("org.robolectric:robolectric:4.18")
     testImplementation("androidx.work:work-testing:2.12.0")
