@@ -62,7 +62,7 @@ jobs without consent, and keeps single-recording approval separate.
 - Android Storage Access Framework
 - WorkManager for durable sequential local and cloud queues
 - Android MediaExtractor/MediaCodec for M4A
-- [sherpa-onnx 1.13.4](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.4)
+- [sherpa-onnx 1.13.8](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.8)
 - Pinned, SHA-256-verified Whisper Small multilingual INT8 model
 
 The Android package remains `cz.majkey.prepis` so upgrades keep the selected
